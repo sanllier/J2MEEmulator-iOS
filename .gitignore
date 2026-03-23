@@ -1,0 +1,15 @@
+# Xcode user-specific files
+xcuserdata/
+*.xcuserstate
+
+# Build artifacts
+DerivedData/
+build/
+
+# Compiled Java classes
+*.class
+
+# OS files
+.DS_Store
+
+.claude/

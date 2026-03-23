@@ -1,0 +1,6 @@
+MIDlet-Name: TestMIDlet
+MIDlet-Version: 1.1
+MIDlet-Vendor: J2ME Emulator
+MIDlet-1: TestMIDlet, , TestMIDlet
+MicroEdition-Profile: MIDP-2.0
+MicroEdition-Configuration: CLDC-1.1
