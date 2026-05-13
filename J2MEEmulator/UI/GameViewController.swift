@@ -4,6 +4,7 @@
 //
 //  Runs a single J2ME MIDlet. Presented modally with zoom transition.
 //  Layout mode determines the arrangement of screen and controls.
+//  Visual treatment — Soft 3D / Neumorphic (design/variants.jsx → NeumoVariant).
 //
 
 import UIKit
@@ -29,20 +30,24 @@ class GameViewController: UIViewController {
     let fpsLimit: Int
     let layoutMode: GameLayoutMode
 
+    private let backgroundView = NeumoBackgroundView()
+    private let screenFrame = NeumoScreenFrame()
     private let emulatorView = EmulatorView()
-    private let glowContainer = UIView()
-    private let glowContentView = UIView()
     private lazy var formView = FormView()
     private lazy var listView = J2MEListView()
-    private let backButton = UIButton(type: .system)
-    private let lskButton = UIButton(type: .system)
-    private let rskButton = UIButton(type: .system)
+    private let closeButton = NeumoButton()
+    private let lskButton = NeumoButton()
+    private let rskButton = NeumoButton()
     private let softKeyHaptic = UIImpactFeedbackGenerator(style: .light)
     private(set) var placeholderIconView: UIImageView?
 
     // Controls — created based on layoutMode
     private var joystickView: JoystickView?
     private var numpadView: NumpadView?
+
+    // Layout cache
+    private var canvasRatio: CGFloat = 1
+    private var lastBounds: CGRect = .zero
 
     init(jarPath: String, appName: String, appIcon: UIImage,
          canvasWidth: Int = 240, canvasHeight: Int = 320,
@@ -79,6 +84,7 @@ class GameViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        canvasRatio = CGFloat(canvasWidth) / CGFloat(canvasHeight)
 
         emulatorView.canvasWidth = canvasWidth
         emulatorView.canvasHeight = canvasHeight
@@ -87,17 +93,12 @@ class GameViewController: UIViewController {
         case .ngage: setupNGageLayout()
         }
 
-        // Placeholder icon — visible until first game frame
+        // Placeholder icon — visible until first game frame. Frame-positioned in layoutControls.
         let iconIV = UIImageView(image: appIcon)
         iconIV.contentMode = .center
-        iconIV.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(iconIV)
-        NSLayoutConstraint.activate([
-            iconIV.centerXAnchor.constraint(equalTo: emulatorView.centerXAnchor),
-            iconIV.centerYAnchor.constraint(equalTo: emulatorView.centerYAnchor),
-        ])
         placeholderIconView = iconIV
-        view.bringSubviewToFront(backButton)
+        view.bringSubviewToFront(closeButton)
 
         // Fade out placeholder on first rendered frame
         emulatorView.onFirstFrame = { [weak self] in
@@ -108,11 +109,6 @@ class GameViewController: UIViewController {
                 icon.removeFromSuperview()
                 self?.placeholderIconView = nil
             }
-        }
-
-        // Mirror game frames to glow layer
-        emulatorView.onFrame = { [weak self] cgImage in
-            self?.glowContentView.layer.contents = cgImage
         }
 
         // Register native callbacks
@@ -127,66 +123,42 @@ class GameViewController: UIViewController {
         startGame()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard view.bounds != lastBounds else { return }
+        lastBounds = view.bounds
+        layoutControls()
+    }
+
     // ============================================================
-    // MARK: - N-Gage layout
+    // MARK: - N-Gage layout (Neumorphic)
     // ============================================================
     //
-    //  ┌──────────────────────────────────────────────────────┐
-    //  │ [X]                                                   │
-    //  │  ┌─────────┐  ┌──────────────┐  ┌───────────────┐  │
-    //  │  │         │  │              │  │ [LSK]   [RSK] │  │
-    //  │  │  ╭───╮  │  │  J2ME Canvas │  │ [1] [2] [3]  │  │
-    //  │  │  │ ○ │  │  │   240×320    │  │ [4] [5] [6]  │  │
-    //  │  │  ╰───╯  │  │              │  │ [7] [8] [9]  │  │
-    //  │  │joystick │  │              │  │ [*] [0] [#]  │  │
-    //  │  └─────────┘  └──────────────┘  └───────────────┘  │
-    //  └──────────────────────────────────────────────────────┘
+    //  Landscape arrangement mirroring design/variants.jsx NeumoVariant.
+    //  All sizes derive from `designUnit` so the layout scales across
+    //  iPhone / iPad while preserving the proportions of the reference.
 
     private func setupNGageLayout() {
+        // Background — full screen neumo gradient + noise.
+        view.addSubview(backgroundView)
+        backgroundView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            backgroundView.topAnchor.constraint(equalTo: view.topAnchor),
+            backgroundView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backgroundView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backgroundView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        // Joystick + Numpad
         let joystick = JoystickView()
         let numpad = NumpadView()
         self.joystickView = joystick
         self.numpadView = numpad
 
-        // Glow: container with game content mirror + NeutralBlurView on top
-        glowContainer.isUserInteractionEnabled = false
-        glowContainer.clipsToBounds = true
-
-        glowContentView.layer.magnificationFilter = .trilinear
-        glowContentView.layer.minificationFilter = .trilinear
-        glowContentView.alpha = 0.6
-        glowContainer.addSubview(glowContentView)
-
-        // glowContentView fills glowContainer
-        glowContentView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            glowContentView.topAnchor.constraint(equalTo: glowContainer.topAnchor),
-            glowContentView.leadingAnchor.constraint(equalTo: glowContainer.leadingAnchor),
-            glowContentView.trailingAnchor.constraint(equalTo: glowContainer.trailingAnchor),
-            glowContentView.bottomAnchor.constraint(equalTo: glowContainer.bottomAnchor),
-        ])
-
-        // Full-screen blur over the glow (no hard edge)
-        let glowBlur = NeutralBlurView(radius: 100)
-        glowBlur.isUserInteractionEnabled = false
-
-        for v: UIView in [glowContainer, glowBlur, joystick, emulatorView, numpad, lskButton, rskButton, formView, listView, backButton] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(v)
-        }
-
-        formView.isHidden = true
-        listView.isHidden = true
-
-        // Soft keys — flanking the game screen at bottom
+        // Soft keys (L/R) — neumo buttons sized like keypad keys.
         for (btn, title) in [(lskButton, "L"), (rskButton, "R")] {
-            btn.setTitle(title, for: .normal)
-            btn.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
-            btn.setTitleColor(.white, for: .normal)
-            btn.backgroundColor = UIColor(white: 0.12, alpha: 1)
-            btn.layer.cornerRadius = 10
-            btn.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
-            btn.layer.borderWidth = 1
+            btn.configureAsSoft(glyph: title, fontSize: 22)
+            btn.cornerRadius = 20
             btn.addTarget(self, action: #selector(softKeyDown(_:)), for: .touchDown)
             btn.addTarget(self, action: #selector(softKeyUp(_:)),
                           for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -194,73 +166,34 @@ class GameViewController: UIViewController {
         lskButton.tag = -6
         rskButton.tag = -7
 
-        // Back button
-        backButton.setTitle("  \u{2715}  ", for: .normal)
-        backButton.titleLabel?.font = .systemFont(ofSize: 20, weight: .medium)
-        backButton.backgroundColor = UIColor(white: 0.15, alpha: 0.85)
-        backButton.setTitleColor(.white, for: .normal)
-        backButton.layer.cornerRadius = 10
-        backButton.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
-        backButton.layer.borderWidth = 1
-        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        // Close — neumo button with SF Symbol xmark glyph.
+        closeButton.cornerRadius = 16
+        let cfg = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        closeButton.configureAsIcon(image: UIImage(systemName: "xmark", withConfiguration: cfg))
+        closeButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
 
-        let canvasRatio: CGFloat = CGFloat(emulatorView.canvasWidth) / CGFloat(emulatorView.canvasHeight)
-        let pad: CGFloat = 8
+        // Add everything (order matters — back to front).
+        view.addSubview(screenFrame)
+        screenFrame.addSubview(emulatorView)
+        view.addSubview(joystick)
+        view.addSubview(numpad)
+        view.addSubview(lskButton)
+        view.addSubview(rskButton)
+        view.addSubview(closeButton)
+        view.addSubview(formView)
+        view.addSubview(listView)
 
-        // Layout guides for centering controls in the side panels
-        let leftArea = UILayoutGuide()
-        let rightArea = UILayoutGuide()
-        view.addLayoutGuide(leftArea)
-        view.addLayoutGuide(rightArea)
+        // Frame-based controls — viewDidLayoutSubviews positions them via designUnit.
+        for v: UIView in [screenFrame, emulatorView, joystick, numpad,
+                          lskButton, rskButton, closeButton] {
+            v.translatesAutoresizingMaskIntoConstraints = true
+        }
 
+        // Auto Layout for full-screen overlays.
+        for v in [formView, listView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+        }
         NSLayoutConstraint.activate([
-            leftArea.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            leftArea.trailingAnchor.constraint(equalTo: emulatorView.leadingAnchor),
-
-            rightArea.leadingAnchor.constraint(equalTo: emulatorView.trailingAnchor),
-            rightArea.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            // Glow content: slightly larger than emulator, sits behind it
-            glowContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            glowContainer.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            glowContainer.widthAnchor.constraint(equalTo: emulatorView.widthAnchor),
-            glowContainer.heightAnchor.constraint(equalTo: emulatorView.heightAnchor),
-
-            // Blur: full screen (no hard edge at glow boundary)
-            glowBlur.topAnchor.constraint(equalTo: view.topAnchor),
-            glowBlur.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            glowBlur.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            glowBlur.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            // Emulator: centered, aspect ratio, full height with padding
-            emulatorView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emulatorView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: pad),
-            emulatorView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -pad),
-            emulatorView.widthAnchor.constraint(equalTo: emulatorView.heightAnchor, multiplier: canvasRatio),
-
-            // Joystick: centered horizontally between safe area left and emulator left
-            joystick.centerXAnchor.constraint(equalTo: leftArea.centerXAnchor),
-            joystick.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80),
-            joystick.widthAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.42),
-            joystick.heightAnchor.constraint(equalTo: joystick.widthAnchor),
-
-            // Numpad: centered in right panel, same width as joystick, top 48pt
-            numpad.centerXAnchor.constraint(equalTo: rightArea.centerXAnchor),
-            numpad.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80),
-            numpad.widthAnchor.constraint(equalTo: joystick.widthAnchor),
-            numpad.heightAnchor.constraint(equalTo: numpad.widthAnchor, multiplier: 1.33),
-
-            // Soft keys: flanking game screen at bottom
-            lskButton.trailingAnchor.constraint(equalTo: emulatorView.leadingAnchor, constant: -6),
-            lskButton.bottomAnchor.constraint(equalTo: emulatorView.bottomAnchor),
-            lskButton.widthAnchor.constraint(equalToConstant: 68),
-            lskButton.heightAnchor.constraint(equalToConstant: 40),
-
-            rskButton.leadingAnchor.constraint(equalTo: emulatorView.trailingAnchor, constant: 6),
-            rskButton.bottomAnchor.constraint(equalTo: emulatorView.bottomAnchor),
-            rskButton.widthAnchor.constraint(equalToConstant: 68),
-            rskButton.heightAnchor.constraint(equalToConstant: 40),
-
-            // Form / List: full screen (overlays everything when visible)
             formView.topAnchor.constraint(equalTo: view.topAnchor),
             formView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             formView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -270,34 +203,134 @@ class GameViewController: UIViewController {
             listView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             listView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             listView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            // Back button: top-left
-            backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
-            backButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 4),
         ])
 
-        // Game screen rounded corners + border
-        emulatorView.layer.cornerRadius = 8
-        emulatorView.clipsToBounds = true
-        emulatorView.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
-        emulatorView.layer.borderWidth = 1
+        formView.isHidden = true
+        listView.isHidden = true
 
         view.bringSubviewToFront(formView)
         view.bringSubviewToFront(listView)
-        view.bringSubviewToFront(backButton)
+        view.bringSubviewToFront(closeButton)
+    }
+
+    // MARK: - Frame-based layout (called whenever bounds change)
+
+    private func layoutControls() {
+        let safe = view.safeAreaLayoutGuide.layoutFrame
+        guard safe.width > 0 && safe.height > 0 else { return }
+
+        // The game screen ignores the bottom safe area — its bottom margin mirrors the
+        // top one measured from the physical edge of the view. Soft keys (L/R) stay anchored
+        // to the safe-area bottom so they don't slide down with the extended screen.
+        let physicalBottom = view.bounds.maxY
+        let extendedHeight = physicalBottom - safe.minY   // from safe top to physical bottom
+
+        // Design reference artboard is 1556×720. Pick the smaller of height/width-constrained
+        // units so the layout fits both phone and tablet aspect ratios.
+        let canvasRatio = self.canvasRatio
+        let unitFromHeight = extendedHeight / 720.0
+        // screenW (canvas+pad) ≈ unit * (canvas.h * ratio + 2*pad) ≈ unit*(652*ratio + 28)
+        // side panels: unit * (dpad 360 + gap + outer ≥ 10) ×2
+        let sideGap: CGFloat = 40
+        let widthRequired = 652 * canvasRatio + 28 + 2 * (360 + sideGap + 10)
+        let unitFromWidth = safe.width / widthRequired
+        let unit = min(unitFromHeight, unitFromWidth)
+
+        // ── Screen bezel ──
+        // Top inset from safe.minY mirrors the bottom inset from view's physical bottom.
+        let topInset: CGFloat = unit * 20
+        let bezelPad = unit * 14
+        let bezelY   = safe.minY + topInset
+        let bezelH   = (physicalBottom - topInset) - bezelY
+        let canvasH  = bezelH - 2 * bezelPad
+        let canvasW  = canvasH * canvasRatio
+        let bezelW   = canvasW + 2 * bezelPad
+        let bezelX   = safe.midX - bezelW / 2
+        screenFrame.frame = CGRect(x: bezelX, y: bezelY, width: bezelW, height: bezelH)
+        screenFrame.canvasPadding = bezelPad
+        screenFrame.bezelCornerRadius = unit * 18
+        screenFrame.wellCornerRadius  = unit * 6
+
+        // Canvas sits inside the bezel padding.
+        emulatorView.frame = CGRect(x: bezelPad, y: bezelPad, width: canvasW, height: canvasH)
+        emulatorView.layer.cornerRadius = screenFrame.canvasCornerRadius
+        emulatorView.clipsToBounds = true
+
+        // Screen edges in view coords — used to anchor side controls.
+        let screenLeft  = bezelX + bezelPad
+        let screenRight = bezelX + bezelW - bezelPad
+
+        // ── D-pad / joystick ──
+        // CSS reference: width 360*unit, top 122. Side gap pulled out to `sideGap` (above).
+        if let joystick = joystickView {
+            let dpadSize = unit * 360
+            let dpadX = screenLeft - unit * sideGap - dpadSize
+            let dpadY = safe.minY + unit * 122
+            joystick.frame = CGRect(x: dpadX, y: dpadY, width: dpadSize, height: dpadSize)
+        }
+
+        // ── Numpad ──
+        // CSS reference: top 110, width = 3*92 + 2*12, height = 4*92 + 3*12.
+        if let numpad = numpadView {
+            let keypadW = unit * (3 * 92 + 2 * 12)
+            let keypadH = unit * (4 * 92 + 3 * 12)
+            let keypadX = screenRight + unit * sideGap
+            let keypadY = safe.minY + unit * 110
+            numpad.frame = CGRect(x: keypadX, y: keypadY, width: keypadW, height: keypadH)
+        }
+
+        // ── Soft keys L / R ──
+        // L/R stay pinned to the old screen-bottom-in-safe-area position (so they don't
+        // slide down with the now-extended canvas) and sit a bit further out horizontally.
+        // Width is 1.5× the CSS reference (96 → 144) for a more comfortable thumb target.
+        let softW = unit * 144
+        let softH = unit * 82
+        let softGap = unit * 22
+        let softY = safe.maxY - topInset - softH
+        lskButton.frame = CGRect(x: screenLeft - softGap - softW, y: softY, width: softW, height: softH)
+        rskButton.frame = CGRect(x: screenRight + softGap,         y: softY, width: softW, height: softH)
+
+        // ── Close ──
+        // CSS: left 28, top 28, width/height 52.
+        let closeSize = unit * 52
+        let closePad  = unit * 28
+        closeButton.frame = CGRect(
+            x: safe.minX + closePad,
+            y: safe.minY + closePad,
+            width: closeSize, height: closeSize)
+        closeButton.cornerRadius = unit * 16
+
+        // Recompute key corners after layout.
+        let keyCorner = unit * 20
+        lskButton.cornerRadius = keyCorner
+        rskButton.cornerRadius = keyCorner
+
+        // L/R glyph — same point size as numpad digits (28pt at unit=1).
+        let softGlyphPt = max(12, unit * 28)
+        lskButton.configureAsSoft(glyph: "L", fontSize: softGlyphPt)
+        rskButton.configureAsSoft(glyph: "R", fontSize: softGlyphPt)
+
+        // Re-render close glyph at the right point size — design icon is 22pt at 52pt button.
+        let closeGlyphPt = max(10, unit * 22)
+        let cfg = UIImage.SymbolConfiguration(pointSize: closeGlyphPt, weight: .semibold)
+        closeButton.configureAsIcon(image: UIImage(systemName: "xmark", withConfiguration: cfg))
+
+        // Center the placeholder app icon over the canvas.
+        placeholderIconView?.frame = CGRect(
+            x: bezelX + bezelPad,
+            y: bezelY + bezelPad,
+            width: canvasW, height: canvasH)
     }
 
     // MARK: - Soft keys
 
-    @objc private func softKeyDown(_ sender: UIButton) {
+    @objc private func softKeyDown(_ sender: NeumoButton) {
         softKeyHaptic.impactOccurred(intensity: 0.6)
         j2me_input_post_key(Int32(J2ME_INPUT_KEY_PRESSED), Int32(sender.tag))
-        sender.backgroundColor = UIColor(white: 0.30, alpha: 1)
     }
 
-    @objc private func softKeyUp(_ sender: UIButton) {
+    @objc private func softKeyUp(_ sender: NeumoButton) {
         j2me_input_post_key(Int32(J2ME_INPUT_KEY_RELEASED), Int32(sender.tag))
-        sender.backgroundColor = UIColor(white: 0.12, alpha: 1)
     }
 
     // ============================================================
@@ -341,7 +374,7 @@ class GameViewController: UIViewController {
     }
 
     @objc private func backTapped() {
-        backButton.isEnabled = false
+        closeButton.isEnabled = false
         jvm_bridge_request_stop()
     }
 

@@ -3,20 +3,41 @@
 //  J2MEEmulator
 //
 //  Virtual analog joystick that emits 8-way numpad key presses (1-4, 6-9).
-//  No fire/5 — that stays on the numpad.
+//  Visual treatment mirrors `.neumo-dpad` from design/variants.jsx — circular dark well
+//  with thin guide ring, etched cardinal cross, four chevron hints, and a 3D stick.
 //
 
 import UIKit
 
 class JoystickView: UIView {
 
-    private let baseView = UIView()
-    private let thumbView = UIView()
+    // MARK: Visual layers
+    private let wellGradient    = CAGradientLayer()    // radial #1a1e25 → #14171c
+    private let wellInsetShadow = NeumoInnerShadowLayer()  // CSS: inset 0 3px 10px black .75 (dark at top rim)
+    private let guideRing       = CAShapeLayer()       // thin 1pt border at inset 7%
+    private let etchedCross     = CAShapeLayer()       // faint cardinal cross
+    private let stickView       = UIView()
+    private let stickGradient   = CAGradientLayer()    // radial offset gradient
+    private let stickNoise      = CALayer()
+    private let stickTopRim     = CAShapeLayer()       // stroked outline — masked to top arc only
+    private let stickTopRimMask = CAGradientLayer()    // vertical fade mask for stickTopRim
+    private let stickBottomShadow = NeumoInnerShadowLayer()  // CSS: inset 0 -5px 12px black .6 — soft bottom shading
+    private let dimpleView      = UIView()
+    private let dimpleGradient  = CAGradientLayer()
+    private let dimpleInset     = NeumoInnerShadowLayer()
 
+    private let hintUp    = UIImageView()
+    private let hintDown  = UIImageView()
+    private let hintLeft  = UIImageView()
+    private let hintRight = UIImageView()
+    private var hintImage: UIImage?
+
+    // MARK: State
     private var activeCode: Int32 = 0
     private var repeatTimer: Timer?
+    private var stickAtRestCenter: CGPoint = .zero
 
-    /// Dead zone as fraction of base radius (no key press within this range)
+    /// Dead zone as fraction of well radius (no key press within this range)
     private let deadZoneRatio: CGFloat = 0.25
 
     /// 8-way direction codes mapped to numpad keys, clockwise from right.
@@ -28,76 +49,252 @@ class JoystickView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isMultipleTouchEnabled = false
+        backgroundColor = .clear
 
-        baseView.backgroundColor = UIColor(white: 0.12, alpha: 1)
-        baseView.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
-        baseView.layer.borderWidth = 1
-        baseView.isUserInteractionEnabled = false
-        addSubview(baseView)
+        // ── Well ──
+        // Radial gradient inside the well — wider light spot fades to almost black at 92%.
+        wellGradient.type = .radial
+        wellGradient.colors = [NeumoPalette.wellInner.cgColor, NeumoPalette.wellOuter.cgColor]
+        wellGradient.locations = [0.0, 0.92]
+        wellGradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        wellGradient.endPoint   = CGPoint(x: 1.0, y: 1.0)
+        // 1.5px hairline border, white .045 alpha.
+        wellGradient.borderWidth = 1.5
+        wellGradient.borderColor = UIColor.white.withAlphaComponent(0.045).cgColor
+        layer.addSublayer(wellGradient)
 
-        thumbView.backgroundColor = UIColor(white: 0.35, alpha: 1)
-        thumbView.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
-        thumbView.layer.borderWidth = 1
-        thumbView.isUserInteractionEnabled = false
-        thumbView.alpha = 0
-        addSubview(thumbView)
+        // Deep inner shadow at top — CSS: inset 0 3px 10px black .75
+        layer.addSublayer(wellInsetShadow)
+
+        // Thin guide ring at 7% inset.
+        guideRing.fillColor = UIColor.clear.cgColor
+        guideRing.strokeColor = UIColor.white.withAlphaComponent(0.04).cgColor
+        guideRing.lineWidth = 1
+        layer.addSublayer(guideRing)
+
+        // Etched cardinal cross — four short ticks between stick and guide ring.
+        etchedCross.fillColor = UIColor.clear.cgColor
+        etchedCross.strokeColor = UIColor.white.withAlphaComponent(0.15).cgColor
+        etchedCross.lineWidth = 1
+        layer.addSublayer(etchedCross)
+
+        // ── Chevron hints (always shown, faintly tinted) ──
+        for hint in [hintUp, hintDown, hintLeft, hintRight] {
+            hint.contentMode = .center
+            hint.isUserInteractionEnabled = false
+            addSubview(hint)
+        }
+        hintDown.transform  = CGAffineTransform(rotationAngle: .pi)
+        hintLeft.transform  = CGAffineTransform(rotationAngle: -.pi / 2)
+        hintRight.transform = CGAffineTransform(rotationAngle: .pi / 2)
+        applyHintTint(.rest)
+
+        // ── Stick ──
+        stickView.isUserInteractionEnabled = false
+        stickView.layer.masksToBounds = false
+        // Outer drop shadow: 0 10px 22px black .55 — bedded by CALayer.shadow*.
+        stickView.layer.shadowColor = UIColor.black.cgColor
+        stickView.layer.shadowOpacity = 0.55
+        stickView.layer.shadowOffset = CGSize(width: 0, height: 10)
+        stickView.layer.shadowRadius = 11
+        addSubview(stickView)
+
+        // Radial gradient on the stick, offset toward upper-left (CSS: at 35% 26%).
+        // CAGradientLayer.radial places the gradient circle in layer coords by
+        // start (center) → end (radius). We center at (0.35, 0.26) and extend to a corner.
+        stickGradient.type = .radial
+        stickGradient.colors = [
+            NeumoPalette.stick1.cgColor,
+            NeumoPalette.stick2.cgColor,
+            NeumoPalette.stick3.cgColor,
+        ]
+        stickGradient.locations = [0.0, 0.5, 1.0]
+        stickGradient.startPoint = CGPoint(x: 0.35, y: 0.26)
+        stickGradient.endPoint   = CGPoint(x: 1.20, y: 1.10)
+        // 1pt dark hairline around the puck — CSS: `0 0 0 1px rgba(0,0,0,.55)`
+        stickGradient.borderWidth = 1
+        stickGradient.borderColor = UIColor.black.withAlphaComponent(0.55).cgColor
+        stickView.layer.addSublayer(stickGradient)
+
+        // Noise overlay on the stick top — subtle texture (`feTurbulence` in the design).
+        stickNoise.contents = NeumoNoise.stickTile.cgImage
+        stickNoise.contentsGravity = .resizeAspectFill
+        stickNoise.opacity = 0.6
+        stickNoise.compositingFilter = "overlayBlendMode"
+        stickView.layer.addSublayer(stickNoise)
+
+        // Convex puck rim shading — dark bottom under the noise so it reads as ambient,
+        // then a stroked top rim with a vertical fade mask so the highlight is contained
+        // to the upper arc and doesn't read as a continuous ring around the whole puck.
+        stickView.layer.addSublayer(stickBottomShadow)
+
+        stickTopRim.fillColor = UIColor.clear.cgColor
+        stickTopRim.strokeColor = UIColor.white.withAlphaComponent(0.35).cgColor
+        stickTopRim.lineWidth = 1
+        // Mask: opaque at the very top, fully clear well before the equator.
+        stickTopRimMask.colors = [UIColor.white.cgColor, UIColor.clear.cgColor]
+        stickTopRimMask.locations = [0.0, 1.0]
+        stickTopRimMask.startPoint = CGPoint(x: 0.5, y: 0.0)
+        stickTopRimMask.endPoint   = CGPoint(x: 0.5, y: 0.28)
+        stickTopRim.mask = stickTopRimMask
+        stickView.layer.addSublayer(stickTopRim)
+
+        // ── Dimple on top of the stick ──
+        dimpleView.isUserInteractionEnabled = false
+        dimpleGradient.type = .radial
+        dimpleGradient.colors = [
+            NeumoPalette.dimple1.cgColor,
+            NeumoPalette.dimple2.cgColor,
+            NeumoPalette.dimple3.cgColor,
+        ]
+        dimpleGradient.locations = [0.0, 0.70, 1.0]
+        dimpleGradient.startPoint = CGPoint(x: 0.35, y: 0.28)
+        dimpleGradient.endPoint   = CGPoint(x: 1.20, y: 1.10)
+        dimpleView.layer.addSublayer(dimpleGradient)
+        dimpleView.layer.addSublayer(dimpleInset)
+        stickView.addSubview(dimpleView)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    // Small arrow indicators for the 4 cardinal directions
-    private let arrowUp = UIImageView()
-    private let arrowDown = UIImageView()
-    private let arrowLeft = UIImageView()
-    private let arrowRight = UIImageView()
-    private var arrowsAdded = false
-
     override func layoutSubviews() {
         super.layoutSubviews()
         let size = min(bounds.width, bounds.height)
-        baseView.frame = CGRect(x: (bounds.width - size) / 2,
-                                 y: (bounds.height - size) / 2,
-                                 width: size, height: size)
-        baseView.layer.cornerRadius = size / 2
+        let wellRect = CGRect(x: (bounds.width - size) / 2,
+                              y: (bounds.height - size) / 2,
+                              width: size, height: size)
+        let radius = size / 2
+        let center = CGPoint(x: wellRect.midX, y: wellRect.midY)
 
-        let thumbSize = size * 0.38
-        thumbView.bounds = CGRect(x: 0, y: 0, width: thumbSize, height: thumbSize)
-        thumbView.layer.cornerRadius = thumbSize / 2
-        thumbView.center = baseView.center
+        // Well gradient layer
+        wellGradient.frame = wellRect
+        wellGradient.cornerRadius = radius
 
-        layoutArrows(baseSize: size)
+        // Inner shadow on the well — inset top 3px, blur 10, black .75 (CSS reference)
+        wellInsetShadow.inset    = CGSize(width: 0, height: 3)
+        wellInsetShadow.blur     = 10
+        wellInsetShadow.color    = .black
+        wellInsetShadow.strength = 0.75
+        wellInsetShadow.apply(to: wellRect, cornerRadius: radius)
+
+        // Guide ring at 7% inset
+        let ringInset = size * 0.07
+        let ringRect = wellRect.insetBy(dx: ringInset, dy: ringInset)
+        guideRing.frame = bounds
+        guideRing.path = UIBezierPath(ovalIn: ringRect).cgPath
+
+        // Cardinal tick marks — sit in the corridor between the stick (~54% radius)
+        // and the guide ring (~93% radius), so they're visible *around* the puck rather
+        // than hidden under it. Each tick is a short radial segment.
+        let crossPath = UIBezierPath()
+        let innerRadius = size * 0.30       // just outside the stick edge (stick = 0.54 * size)
+        let outerRadius = size * 0.38       // ends well inside the guide ring
+        // Horizontal segments (left / right ticks)
+        crossPath.move(to: CGPoint(x: center.x - outerRadius, y: center.y))
+        crossPath.addLine(to: CGPoint(x: center.x - innerRadius, y: center.y))
+        crossPath.move(to: CGPoint(x: center.x + innerRadius, y: center.y))
+        crossPath.addLine(to: CGPoint(x: center.x + outerRadius, y: center.y))
+        // Vertical segments (top / bottom ticks)
+        crossPath.move(to: CGPoint(x: center.x, y: center.y - outerRadius))
+        crossPath.addLine(to: CGPoint(x: center.x, y: center.y - innerRadius))
+        crossPath.move(to: CGPoint(x: center.x, y: center.y + innerRadius))
+        crossPath.addLine(to: CGPoint(x: center.x, y: center.y + outerRadius))
+        etchedCross.frame = bounds
+        etchedCross.path = crossPath.cgPath
+
+        // Hints — small light-weight chevrons pinned to the outer rim of the well,
+        // right on the guide ring (≈4% inset from the well edge).
+        let hintInset: CGFloat = size * 0.04
+        let hintGlyphSize: CGFloat = max(8, size * 0.045)
+        if hintImage?.size.height != hintGlyphSize {
+            let cfg = UIImage.SymbolConfiguration(pointSize: hintGlyphSize, weight: .light)
+            hintImage = UIImage(systemName: "chevron.up", withConfiguration: cfg)
+            for hint in [hintUp, hintDown, hintLeft, hintRight] {
+                hint.image = hintImage
+            }
+            applyHintTint(.rest)
+        }
+        let hintBox = CGSize(width: hintGlyphSize * 1.8, height: hintGlyphSize * 1.8)
+        func placeHint(_ hint: UIImageView, x: CGFloat, y: CGFloat) {
+            hint.bounds = CGRect(origin: .zero, size: hintBox)
+            hint.center = CGPoint(x: x, y: y)
+        }
+        placeHint(hintUp,    x: center.x,                 y: wellRect.minY + hintInset)
+        placeHint(hintDown,  x: center.x,                 y: wellRect.maxY - hintInset)
+        placeHint(hintLeft,  x: wellRect.minX + hintInset, y: center.y)
+        placeHint(hintRight, x: wellRect.maxX - hintInset, y: center.y)
+
+        // Stick — 54% of well diameter.
+        let stickSize = size * 0.54
+        let stickRect = CGRect(x: 0, y: 0, width: stickSize, height: stickSize)
+        stickView.bounds = stickRect
+        stickView.center = center
+        stickAtRestCenter = center
+        stickView.layer.cornerRadius = stickSize / 2
+        stickView.layer.shadowPath = UIBezierPath(ovalIn: stickRect).cgPath
+
+        stickGradient.frame = stickRect
+        stickGradient.cornerRadius = stickSize / 2
+        stickGradient.masksToBounds = true
+
+        stickNoise.frame = stickRect
+        stickNoise.cornerRadius = stickSize / 2
+        stickNoise.masksToBounds = true
+
+        // CSS reference for the puck bottom: `inset 0 -5px 12px rgba(0,0,0,.6)` — soft pillow.
+        stickBottomShadow.inset    = CGSize(width: 0, height: -5)
+        stickBottomShadow.blur     = 12
+        stickBottomShadow.color    = .black
+        stickBottomShadow.strength = 0.6
+        stickBottomShadow.apply(to: stickRect, cornerRadius: stickSize / 2)
+
+        // Top rim — stroke a circle inset by half lineWidth so the stroke sits inside the puck.
+        stickTopRim.frame = stickRect
+        stickTopRim.path = UIBezierPath(ovalIn: stickRect.insetBy(dx: 0.5, dy: 0.5)).cgPath
+        stickTopRimMask.frame = stickRect
+
+        // Dimple — 36% of stick.
+        let dimpleSize = stickSize * 0.36
+        let dimpleRect = CGRect(x: 0, y: 0, width: dimpleSize, height: dimpleSize)
+        dimpleView.bounds = dimpleRect
+        dimpleView.center = CGPoint(x: stickSize / 2, y: stickSize / 2)
+        dimpleView.layer.cornerRadius = dimpleSize / 2
+        dimpleView.layer.masksToBounds = true
+
+        dimpleGradient.frame = dimpleRect
+        dimpleGradient.cornerRadius = dimpleSize / 2
+
+        // Concave inner shadow on the dimple — inset 0 2px 6px black .55
+        dimpleInset.inset    = CGSize(width: 0, height: 2)
+        dimpleInset.blur     = 6
+        dimpleInset.color    = .black
+        dimpleInset.strength = 0.55
+        dimpleInset.apply(to: dimpleRect, cornerRadius: dimpleSize / 2)
     }
 
-    private func layoutArrows(baseSize: CGFloat) {
-        if !arrowsAdded {
-            arrowsAdded = true
-            let cfg = UIImage.SymbolConfiguration(pointSize: baseSize * 0.08, weight: .semibold)
-            let img = UIImage(systemName: "chevron.up", withConfiguration: cfg)?
-                .withTintColor(UIColor(white: 1, alpha: 0.3), renderingMode: .alwaysOriginal)
-            for arrow in [arrowUp, arrowDown, arrowLeft, arrowRight] {
-                arrow.image = img
-                arrow.contentMode = .center
-                arrow.isUserInteractionEnabled = false
-                baseView.addSubview(arrow)
-            }
-            arrowDown.transform = CGAffineTransform(rotationAngle: .pi)
-            arrowLeft.transform = CGAffineTransform(rotationAngle: -.pi / 2)
-            arrowRight.transform = CGAffineTransform(rotationAngle: .pi / 2)
+    // MARK: - Hint tinting
+
+    private enum HintState { case rest, active }
+
+    private func applyHintTint(_ state: HintState) {
+        let color: UIColor
+        switch state {
+        case .rest:   color = NeumoPalette.hintRest
+        case .active: color = NeumoPalette.accent
         }
-        let r = baseSize / 2
-        let inset = baseSize * 0.14
-        let aSize: CGFloat = baseSize * 0.2
-        arrowUp.frame    = CGRect(x: r - aSize / 2, y: inset - aSize / 2,            width: aSize, height: aSize)
-        arrowDown.frame  = CGRect(x: r - aSize / 2, y: baseSize - inset - aSize / 2, width: aSize, height: aSize)
-        arrowLeft.frame  = CGRect(x: inset - aSize / 2, y: r - aSize / 2,            width: aSize, height: aSize)
-        arrowRight.frame = CGRect(x: baseSize - inset - aSize / 2, y: r - aSize / 2, width: aSize, height: aSize)
+        for hint in [hintUp, hintDown, hintLeft, hintRight] {
+            hint.tintColor = color
+            // SF Symbols ignore tintColor when rendered as `automatic`; force template.
+            if let img = hint.image, img.renderingMode != .alwaysTemplate {
+                hint.image = img.withRenderingMode(.alwaysTemplate)
+            }
+        }
     }
 
     // MARK: - Touch handling
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let pt = touches.first?.location(in: self) else { return }
-        thumbView.alpha = 1
         update(at: pt)
     }
 
@@ -117,19 +314,23 @@ class JoystickView: UIView {
     // MARK: - Joystick logic
 
     private func update(at point: CGPoint) {
-        let cx = baseView.center.x
-        let cy = baseView.center.y
-        let radius = baseView.bounds.width / 2
+        let cx = stickAtRestCenter.x
+        let cy = stickAtRestCenter.y
+        let radius = wellGradient.bounds.width / 2
 
         let dx = point.x - cx
         let dy = point.y - cy
         let dist = hypot(dx, dy)
         let angle = atan2(dy, dx)
 
-        // Clamp thumb to base circle
-        let clamped = min(dist, radius * 0.85)
-        thumbView.center = CGPoint(x: cx + cos(angle) * clamped,
-                                    y: cy + sin(angle) * clamped)
+        // Clamp stick travel — let the puck reach all the way to the well rim.
+        // Stick radius = size * 0.27 = radius * 0.54, so its center can travel up to
+        // radius * (1 - 0.54) = radius * 0.46 before the puck edge meets the well rim.
+        let clamped = min(dist, radius * 0.46)
+        let newCenter = CGPoint(x: cx + cos(angle) * clamped, y: cy + sin(angle) * clamped)
+        UIView.animate(withDuration: 0.06, delay: 0, options: [.beginFromCurrentState, .curveLinear]) {
+            self.stickView.center = newCenter
+        }
 
         // Dead zone check
         if dist < radius * deadZoneRatio {
@@ -151,10 +352,12 @@ class JoystickView: UIView {
 
     private func reset() {
         if activeCode != 0 { releaseKey(activeCode) }
-        UIView.animate(withDuration: 0.15) { [weak self] in
-            guard let self else { return }
-            self.thumbView.center = self.baseView.center
-            self.thumbView.alpha = 0
+        UIView.animate(withDuration: 0.32,
+                       delay: 0,
+                       usingSpringWithDamping: 0.7,
+                       initialSpringVelocity: 0.3,
+                       options: [.beginFromCurrentState]) {
+            self.stickView.center = self.stickAtRestCenter
         }
     }
 
