@@ -98,9 +98,16 @@ static void track_audio_player(AVAudioPlayer *player) {
     }
 }
 
-static void untrack_audio_player(AVAudioPlayer *player) {
+// Returns YES iff this caller actually removed the player from the tracking set
+// (only the remover owns the CFRetain and must do the matching CFRelease).
+// This races with j2me_audio_stop_all, which also drains the set under the same lock.
+static BOOL claim_audio_player(AVAudioPlayer *player) {
     @synchronized ([AVAudioSession class]) {
-        [g_active_audio_players removeObject:player];
+        if (g_active_audio_players && [g_active_audio_players containsObject:player]) {
+            [g_active_audio_players removeObject:player];
+            return YES;
+        }
+        return NO;
     }
 }
 
@@ -111,9 +118,13 @@ static void track_midi_player(AVMIDIPlayer *player) {
     }
 }
 
-static void untrack_midi_player(AVMIDIPlayer *player) {
+static BOOL claim_midi_player(AVMIDIPlayer *player) {
     @synchronized ([AVAudioSession class]) {
-        [g_active_midi_players removeObject:player];
+        if (g_active_midi_players && [g_active_midi_players containsObject:player]) {
+            [g_active_midi_players removeObject:player];
+            return YES;
+        }
+        return NO;
     }
 }
 
@@ -215,9 +226,11 @@ static s32 n_audioClose(Runtime *runtime, JClass *clazz) {
     s64 handle = env->localvar_getLong_2slot(runtime->localvar, 0);
     if (handle) {
         AVAudioPlayer *player = (__bridge AVAudioPlayer *)(void *)(intptr_t)handle;
-        [player stop];
-        untrack_audio_player(player);
-        CFRelease((__bridge CFTypeRef)player);
+        if (claim_audio_player(player)) {
+            [player stop];
+            CFRelease((__bridge CFTypeRef)player);
+        }
+        // else: j2me_audio_stop_all already took ownership; do nothing.
     }
     return RUNTIME_STATUS_NORMAL;
 }
@@ -283,14 +296,39 @@ static s32 n_audioCreateMidiPlayer(Runtime *runtime, JClass *clazz) {
 
     ensureAudioSession();
 
-    s32 length = arr->arr_length;
-    NSData *data = [NSData dataWithBytes:arr->arr_body length:length];
     NSURL *sfURL = getSoundFontURL();
+    if (!sfURL) {
+        // AVMIDIPlayer with a nil soundBankURL throws an Obj-C exception inside
+        // MIDIPlayerImpl::finishLoad rather than returning an NSError. Fail fast.
+        env->push_long(runtime->stack, 0);
+        return RUNTIME_STATUS_NORMAL;
+    }
 
+    s32 length = arr->arr_length;
+    // SMF header is "MThd" + 6-byte length prefix + a 6-byte chunk = 14 bytes minimum.
+    // Anything shorter cannot be a valid MIDI file and would also trip the exception.
+    if (length < 14) {
+        env->push_long(runtime->stack, 0);
+        return RUNTIME_STATUS_NORMAL;
+    }
+    NSData *data = [NSData dataWithBytes:arr->arr_body length:length];
+
+    AVMIDIPlayer *player = nil;
     NSError *error = nil;
-    AVMIDIPlayer *player = [[AVMIDIPlayer alloc] initWithData:data
-                                                 soundBankURL:sfURL
-                                                        error:&error];
+    @try {
+        player = [[AVMIDIPlayer alloc] initWithData:data
+                                       soundBankURL:sfURL
+                                              error:&error];
+    } @catch (NSException *e) {
+        // AVMIDIPlayer raises NSException (not NSError) on malformed MIDI data —
+        // e.g. games that pass custom/non-SMF streams. Swallow and report failure
+        // so the Java caller can handle MediaException gracefully.
+        printf("[J2ME Audio] AVMIDIPlayer init threw %s: %s\n",
+               [[e name] UTF8String] ?: "(no name)",
+               [[e reason] UTF8String] ?: "(no reason)");
+        env->push_long(runtime->stack, 0);
+        return RUNTIME_STATUS_NORMAL;
+    }
     if (error || !player) {
         printf("[J2ME Audio] AVMIDIPlayer init error: %s\n",
                error ? [[error localizedDescription] UTF8String] : "nil");
@@ -330,9 +368,11 @@ static s32 n_audioMidiClose(Runtime *runtime, JClass *clazz) {
     s64 handle = env->localvar_getLong_2slot(runtime->localvar, 0);
     if (handle) {
         AVMIDIPlayer *player = (__bridge AVMIDIPlayer *)(void *)(intptr_t)handle;
-        [player stop];
-        untrack_midi_player(player);
-        CFRelease((__bridge CFTypeRef)player);
+        if (claim_midi_player(player)) {
+            [player stop];
+            CFRelease((__bridge CFTypeRef)player);
+        }
+        // else: j2me_audio_stop_all already took ownership; do nothing.
     }
     return RUNTIME_STATUS_NORMAL;
 }
