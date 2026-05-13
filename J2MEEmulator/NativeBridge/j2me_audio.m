@@ -48,21 +48,32 @@ static s64 take_player_heap_bytes(id player) {
 // ============================================================
 // Audio session setup
 // ============================================================
-
-// Reset by j2me_audio_stop_all so the next MIDlet picks up a fresh session.
-static BOOL g_audio_session_active = NO;
+//
+// We activate the shared AVAudioSession once per app lifetime and never
+// tear it down. Earlier code deactivated it on j2me_audio_stop_all
+// (between MIDlets), but setActive:NO with NotifyOthersOnDeactivation is
+// asynchronous: setActive:YES on the next MIDlet would return success
+// while the session was still mid-deactivate, and AVMIDIPlayer's internal
+// AudioUnit setup would then fail with kAudioUnitErr_InvalidPropertyValue
+// (-10851), silently losing MIDI playback for the rest of the session.
+// Apple's apps generally leave the session active for the app's lifetime.
 
 static void ensureAudioSession(void) {
-    if (!g_audio_session_active) {
-        NSError *error = nil;
-        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:&error];
-        [[AVAudioSession sharedInstance] setActive:YES error:&error];
-        if (error) {
-            printf("[J2ME Audio] Audio session error: %s\n",
-                   [[error localizedDescription] UTF8String]);
-        }
-        g_audio_session_active = YES;
+    static BOOL initialized = NO;
+    if (initialized) return;
+    NSError *catErr = nil, *actErr = nil;
+    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:&catErr];
+    [[AVAudioSession sharedInstance] setActive:YES error:&actErr];
+    if (catErr) {
+        printf("[J2ME Audio] setCategory error: %s\n",
+               [[catErr localizedDescription] UTF8String]);
     }
+    if (actErr) {
+        printf("[J2ME Audio] setActive error: %s — will retry on next play\n",
+               [[actErr localizedDescription] UTF8String]);
+        return; // leave initialized=NO so a subsequent play tries again
+    }
+    initialized = YES;
 }
 
 // ============================================================
@@ -201,18 +212,12 @@ void j2me_audio_stop_all(void) {
         }
     }
 
-    // Release the shared AVAudioSession back to the system so other apps
-    // (and the rest of the host app) don't keep an active audio category
-    // pinned by a no-longer-playing MIDlet. ensureAudioSession() reactivates
-    // it lazily on the next play; clear the cached flag so it actually does.
-    if (g_audio_session_active) {
-        NSError *deactErr = nil;
-        [[AVAudioSession sharedInstance]
-            setActive:NO
-            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
-            error:&deactErr];
-        g_audio_session_active = NO;
-    }
+    // Note: we deliberately do NOT call setActive:NO here. Deactivation
+    // is async (NotifyOthersOnDeactivation in particular), and a quick
+    // reactivate in the next MIDlet races the async teardown — AVMIDIPlayer
+    // then fails to bring up its AudioUnit and silently disables MIDI.
+    // Leaving the session active across MIDlets is the standard pattern
+    // for iOS audio apps and incurs no measurable hardware cost.
 
     printf("[J2ME Audio] All players stopped and released\n");
 }
