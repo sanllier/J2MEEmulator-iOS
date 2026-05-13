@@ -112,9 +112,15 @@ final class NeumoInnerShadowLayer: CAShapeLayer {
         let local = CGRect(origin: .zero, size: rect.size)
         // Outer rim must be much larger than the visible rect so the shadow projects all the way inward.
         let outerInset: CGFloat = max(blur, 20) * 2
+        // Push the ring's INNER edge a couple of points OUTSIDE the masked region,
+        // otherwise the mask's antialiased rim samples a sliver of fill colour and
+        // a 1px hairline (white for `innerLight`) shows up along the rounded edge.
+        // Shadow geometry is unaffected — it's still wide enough to wrap inward.
+        let bleedGuard: CGFloat = 2
         let outer = UIBezierPath(roundedRect: local.insetBy(dx: -outerInset, dy: -outerInset),
                                  cornerRadius: cornerRadius + outerInset)
-        let inner = UIBezierPath(roundedRect: local, cornerRadius: cornerRadius).reversing()
+        let inner = UIBezierPath(roundedRect: local.insetBy(dx: -bleedGuard, dy: -bleedGuard),
+                                 cornerRadius: cornerRadius + bleedGuard).reversing()
         outer.append(inner)
         path = outer.cgPath
         fillRule = .evenOdd
@@ -477,25 +483,30 @@ final class NeumoScreenFrame: UIView {
         super.init(frame: frame)
         backgroundColor = .clear
 
-        // Bezel — linear 180° #11161d → #0a0d12.
+        // Bezel — linear 180° #11161d → #0a0d12, with the same hairline border the
+        // CSS reference puts on it (`0 0 0 1px rgba(255,255,255,.05)`).
         outerGradient.colors = [NeumoPalette.screenBezelTop.cgColor, NeumoPalette.screenBezelBottom.cgColor]
         outerGradient.startPoint = CGPoint(x: 0.5, y: 0)
         outerGradient.endPoint   = CGPoint(x: 0.5, y: 1)
+        // Uniform hairline tracing the whole rounded perimeter — CSS reference uses
+        // 0.05 alpha but on a dark gradient that washes out; bumped to .14 so the
+        // border actually reads.
         outerGradient.borderWidth = 1
-        outerGradient.borderColor = UIColor.white.withAlphaComponent(0.05).cgColor
+        outerGradient.borderColor = UIColor.white.withAlphaComponent(0.14).cgColor
         layer.addSublayer(outerGradient)
 
-        // Inner well — deep inset shadow.
+        // Inner well — deep inset shadow on top of the gradient.
         layer.addSublayer(innerWellShadow)
 
-        // Outer drop shadow is intentionally suppressed — the bezel sits flat on the neumo
-        // background instead of casting a sharp halo into it. (CSS reference had a `0 28 60 .65`
-        // drop, but on a dark gradient it reads as a hard black rectangle below the screen.)
-        //
-        // Clip to the rounded bezel: the inner-well shadow path extends well past the bezel
-        // (outerInset ≈ blur*2), and without clipping that big black ring bleeds onto the
-        // background as a faint dark rectangle around the bezel.
-        layer.masksToBounds = true
+        // Soft drop shadow under the bezel — CSS reference is `0 28px 60px rgba(0,0,0,.65)`;
+        // toned down to .35 so it reads as gentle lift rather than a hard black rectangle.
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 12)
+        layer.shadowRadius = 24
+        layer.shadowOpacity = 0.35
+        // masksToBounds MUST stay false for the drop shadow to render. The inner well
+        // shadow layer below has its own mask so it doesn't leak past the bezel.
+        layer.masksToBounds = false
 
         addLayoutGuide(canvasLayoutGuide)
     }
@@ -506,8 +517,10 @@ final class NeumoScreenFrame: UIView {
         super.layoutSubviews()
         outerGradient.frame = bounds
         outerGradient.cornerRadius = bezelCornerRadius
-        // Match the layer's own corner so masksToBounds clips along the rounded bezel.
         layer.cornerRadius = bezelCornerRadius
+        // Explicit shadowPath so Core Animation doesn't have to sample the layer's
+        // alpha each frame to figure out the shadow shape.
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: bezelCornerRadius).cgPath
 
         // Inner well rect — bounds inset by padding, with own corner radius.
         let well = bounds.insetBy(dx: canvasPadding, dy: canvasPadding)

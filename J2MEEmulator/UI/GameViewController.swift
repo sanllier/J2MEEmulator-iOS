@@ -215,25 +215,26 @@ class GameViewController: UIViewController {
 
         // `unit` is locked to the safe-area HEIGHT only — controls (dpad, numpad, soft
         // keys, close, bezel padding/corner) all derive from it, so their sizes and Y
-        // positions stay the same regardless of which game is loaded. The canvas itself
-        // is then sized to fit in whatever horizontal space is left after subtracting
-        // the controls + outer safe margin.
+        // positions stay the same regardless of which game is loaded.
         let canvasRatio = self.canvasRatio
         let unit = extendedHeight / 720.0
 
         // ── Fixed-size controls (per design, scaled by `unit`) ──
-        let dpadDesign: CGFloat = 320
-        let sideGapDesign: CGFloat = 40
-        let outerMarginDesign: CGFloat = 24
         let bezelPad = unit * 14
         let topInset: CGFloat = unit * 20
-        let dpadSize     = unit * dpadDesign
-        let sideGapPx    = unit * sideGapDesign
-        let outerMarginPx = unit * outerMarginDesign
+        let dpadSize  = unit * 320
+        let keypadW   = unit * (3 * 92 + 2 * 12)
+        let keypadH   = unit * (4 * 92 + 3 * 12)
+        // Controls are pinned a fixed distance from the safe-area edges and stay put
+        // regardless of canvas aspect — the canvas grows/shrinks in the middle to fit.
+        let outerMargin: CGFloat = 16   // safe-area outer inset for D-pad / numpad / L / R
+        let minBezelGap: CGFloat = 12   // minimum horizontal gap between controls and bezel
 
-        // ── Canvas / bezel — sized to fit in the remaining horizontal budget ──
+        // ── Canvas / bezel — sized to fit between the pinned controls ──
         let maxBezelH = (physicalBottom - topInset) - (safe.minY + topInset)
-        let maxBezelW = safe.width - 2 * (dpadSize + sideGapPx + outerMarginPx)
+        let leftReserved  = outerMargin + dpadSize + minBezelGap
+        let rightReserved = outerMargin + keypadW + minBezelGap
+        let maxBezelW = max(0, safe.width - leftReserved - rightReserved)
 
         var canvasH = maxBezelH - 2 * bezelPad
         var canvasW = canvasH * canvasRatio
@@ -256,39 +257,29 @@ class GameViewController: UIViewController {
         emulatorView.layer.cornerRadius = screenFrame.canvasCornerRadius
         emulatorView.clipsToBounds = true
 
-        // Screen edges in view coords — used to anchor side controls horizontally.
-        let screenLeft  = bezelX + bezelPad
-        let screenRight = bezelX + bezelW - bezelPad
-
-        // ── D-pad / joystick ──
-        // CSS reference: width ~320*unit (trimmed from the original 360 — read too large),
-        // top 122. Side gap pulled out to `sideGap` (above).
+        // ── D-pad / joystick ── pinned 16pt from safe-area left edge.
+        let dpadX = safe.minX + outerMargin
         if let joystick = joystickView {
-            let dpadX = screenLeft - sideGapPx - dpadSize
             let dpadY = safe.minY + unit * 122
             joystick.frame = CGRect(x: dpadX, y: dpadY, width: dpadSize, height: dpadSize)
         }
 
-        // ── Numpad ──
-        // CSS reference: top 110, width = 3*92 + 2*12, height = 4*92 + 3*12.
+        // ── Numpad ── pinned 16pt from safe-area right edge.
+        let keypadX = safe.maxX - outerMargin - keypadW
         if let numpad = numpadView {
-            let keypadW = unit * (3 * 92 + 2 * 12)
-            let keypadH = unit * (4 * 92 + 3 * 12)
-            let keypadX = screenRight + sideGapPx
             let keypadY = safe.minY + unit * 110
             numpad.frame = CGRect(x: keypadX, y: keypadY, width: keypadW, height: keypadH)
         }
 
-        // ── Soft keys L / R ──
-        // L/R stay pinned to the old screen-bottom-in-safe-area position (so they don't
-        // slide down with the now-extended canvas) and sit a bit further out horizontally.
-        // Width is 1.5× the CSS reference (96 → 144) for a more comfortable thumb target.
+        // ── Soft keys L / R ── pinned to the bezel's outer edges (move with the bezel).
+        // Gap from the bezel matches `minBezelGap` — the same minimum spacing the bezel
+        // keeps from the dpad / numpad.
         let softW = unit * 144
         let softH = unit * 82
-        let softGap = unit * 22
+        let softGap = minBezelGap
         let softY = safe.maxY - topInset - softH
-        lskButton.frame = CGRect(x: screenLeft - softGap - softW, y: softY, width: softW, height: softH)
-        rskButton.frame = CGRect(x: screenRight + softGap,         y: softY, width: softW, height: softH)
+        lskButton.frame = CGRect(x: bezelX - softGap - softW,    y: softY, width: softW, height: softH)
+        rskButton.frame = CGRect(x: bezelX + bezelW + softGap,   y: softY, width: softW, height: softH)
 
         // ── Close ──
         // CSS: left 28, top 28, width/height 52.
