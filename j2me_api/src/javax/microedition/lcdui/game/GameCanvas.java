@@ -22,7 +22,15 @@ public class GameCanvas extends Canvas {
 	public static final int GAME_D_PRESSED = 1 << Canvas.GAME_D;
 
 	private Image image;
-	private int keyState;
+	// Currently-held bits. Updated on every postKeyPressed/Released.
+	private volatile int keyState;
+	// "Pressed since last getKeyStates()" bits — sticky, only cleared
+	// when the game polls. Without this, a short tap can flip
+	// keyState |= bit then keyState &= ~bit between two getKeyStates()
+	// calls and the game never sees the press. MIDP spec is explicit:
+	// "the latched state of the keys is reported instead of the
+	// current state of the keys."
+	private volatile int keyStateLatched;
 	private final boolean suppressCommands;
 
 	public GameCanvas(boolean suppressCommands) {
@@ -70,7 +78,10 @@ public class GameCanvas extends Canvas {
 	public void postKeyPressed(int keyCode) {
 		int code = convertGameKeyCode(keyCode);
 		if (code != 0) {
-			keyState |= code;
+			synchronized (this) {
+				keyState |= code;
+				keyStateLatched |= code;
+			}
 			if (suppressCommands) {
 				return;
 			}
@@ -82,7 +93,12 @@ public class GameCanvas extends Canvas {
 	public void postKeyReleased(int keyCode) {
 		int code = convertGameKeyCode(keyCode);
 		if (code != 0) {
-			keyState &= ~code;
+			synchronized (this) {
+				// Clear only the live-held state. keyStateLatched survives
+				// until getKeyStates() consumes it, so a brief tap is
+				// reported on the next poll even if release got there first.
+				keyState &= ~code;
+			}
 			if (suppressCommands) {
 				return;
 			}
@@ -99,7 +115,13 @@ public class GameCanvas extends Canvas {
 	}
 
 	public int getKeyStates() {
-		return keyState;
+		synchronized (this) {
+			// Report latched (= held + recently-tapped) state, then drop
+			// the latched bits for keys that aren't actually held anymore.
+			int result = keyStateLatched;
+			keyStateLatched = keyState;
+			return result;
+		}
 	}
 
 	public Graphics getGraphics() {
@@ -119,7 +141,10 @@ public class GameCanvas extends Canvas {
 
 	@Override
 	public void doShowNotify() {
-		keyState = 0;
+		synchronized (this) {
+			keyState = 0;
+			keyStateLatched = 0;
+		}
 		super.doShowNotify();
 	}
 }
