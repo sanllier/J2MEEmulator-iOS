@@ -2,7 +2,9 @@
 //  AppsListViewController.swift
 //  J2MEEmulator
 //
-//  Springboard-style home screen with app grid.
+//  Game library — A1 · Minimal layout from design/library.jsx.
+//  Same neumorphic background as the in-game screen, 4-column icon grid,
+//  round neumo "+" button in the top-right corner.
 //
 
 import UIKit
@@ -13,9 +15,30 @@ class AppsListViewController: UIViewController,
                       UICollectionViewDelegate,
                       UIDocumentPickerDelegate {
 
+    private let backgroundView = NeumoBackgroundView()
     private var springboardCollectionView: UICollectionView!
     private let emptyStateLabel = UILabel()
+    private let addButton = NeumoButton()
     private var lastLayoutWidth: CGFloat = 0
+
+    // Design reference (design/library.jsx, A1 · Minimal) — positions measured from
+    // the artboard's top edge (which already includes the status-bar area):
+    //   plus button top: 68, right: 18, size 48 (round)
+    //   grid top: 144      ⇒ 28pt gap below the plus button
+    //   grid bottom: 50
+    // iPhone safe.top in portrait ≈ 47pt, so subtract that to anchor against safe.top.
+    private enum Layout {
+        static let columns: CGFloat = 4
+        static let sidePadding: CGFloat = 24
+        static let columnGap: CGFloat = 18
+        static let rowGap: CGFloat = 22
+        static let plusSize: CGFloat = 48
+        static let plusRightInset: CGFloat = 18
+        // Reference distances measured from the artboard top.
+        static let plusTopFromArtboardTop: CGFloat = 68
+        static let gridTopFromArtboardTop: CGFloat = 144
+        static let gridBottomFromArtboardBottom: CGFloat = 50
+    }
 
     /// Directory where imported JARs are stored
     private static var gamesDirectory: String {
@@ -27,29 +50,22 @@ class AppsListViewController: UIViewController,
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = NeumoPalette.bgBase2
 
-        // Animated blob background
-        let bg = AnimatedBackgroundView()
-        bg.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(bg)
+        // Neumo background — layered gradients + grain (same as in-game screen).
+        backgroundView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backgroundView)
         NSLayoutConstraint.activate([
-            bg.topAnchor.constraint(equalTo: view.topAnchor),
-            bg.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bg.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bg.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backgroundView.topAnchor.constraint(equalTo: view.topAnchor),
+            backgroundView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backgroundView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backgroundView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        // "+" button — import JAR from Files
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            systemItem: .add, primaryAction: UIAction { [weak self] _ in
-                self?.addAppTapped()
-            })
 
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .vertical
-        layout.minimumInteritemSpacing = 0
-        layout.minimumLineSpacing = 10
+        layout.minimumInteritemSpacing = Layout.columnGap
+        layout.minimumLineSpacing = Layout.rowGap
 
         springboardCollectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
         springboardCollectionView.dataSource = self
@@ -59,7 +75,8 @@ class AppsListViewController: UIViewController,
         springboardCollectionView.showsVerticalScrollIndicator = false
         springboardCollectionView.register(SpringboardCell.self,
                                            forCellWithReuseIdentifier: SpringboardCell.reuseID)
-        springboardCollectionView.contentInsetAdjustmentBehavior = .always
+        // Manage insets manually so the grid lines up with the reference (status-bar-relative).
+        springboardCollectionView.contentInsetAdjustmentBehavior = .never
         springboardCollectionView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(springboardCollectionView)
 
@@ -70,9 +87,17 @@ class AppsListViewController: UIViewController,
             springboardCollectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
+        // Round neumo "+" button — top-right corner under the status bar.
+        addButton.cornerRadius = Layout.plusSize / 2
+        let cfg = UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold)
+        addButton.configureAsIcon(image: UIImage(systemName: "plus", withConfiguration: cfg))
+        addButton.addTarget(self, action: #selector(addAppTapped), for: .touchUpInside)
+        addButton.translatesAutoresizingMaskIntoConstraints = true
+        view.addSubview(addButton)
+
         // Empty state
         emptyStateLabel.text = "No Games Yet\nTap + to add a .jar file"
-        emptyStateLabel.textColor = .secondaryLabel
+        emptyStateLabel.textColor = NeumoPalette.label
         emptyStateLabel.font = .systemFont(ofSize: 17)
         emptyStateLabel.textAlignment = .center
         emptyStateLabel.numberOfLines = 0
@@ -89,6 +114,12 @@ class AppsListViewController: UIViewController,
         try? FileManager.default.createDirectory(atPath: Self.gamesDirectory,
                                                   withIntermediateDirectories: true)
         scanApps()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Library screen owns its own "+" button — hide the system nav bar.
+        navigationController?.setNavigationBarHidden(true, animated: animated)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -108,26 +139,46 @@ class AppsListViewController: UIViewController,
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let width = springboardCollectionView.bounds.width
+        let width = view.bounds.width
+        let height = view.bounds.height
+
+        // Reference distances are measured from the artboard's *physical* top/bottom,
+        // not from the safe area — `top: 68` already sits below the status bar in the design.
+        let plusY = max(Layout.plusTopFromArtboardTop, view.safeAreaInsets.top + 4)
+        let gridTop = max(Layout.gridTopFromArtboardTop, plusY + Layout.plusSize + 28)
+        let gridBottomInset = max(Layout.gridBottomFromArtboardBottom, view.safeAreaInsets.bottom + 16)
+
+        // "+" button — pinned right, design Y from the top of the screen.
+        addButton.frame = CGRect(
+            x: width - Layout.plusRightInset - Layout.plusSize,
+            y: plusY,
+            width: Layout.plusSize, height: Layout.plusSize)
+
         guard width > 0, width != lastLayoutWidth else { return }
         lastLayoutWidth = width
 
-        let columns: CGFloat = 4
-        let iconSize = SpringboardCell.iconSize
-        let cellWidth = (width + iconSize) / (columns + 1)
-        let horizontalInset = (cellWidth - iconSize) / 2
+        let columns = Layout.columns
+        let sidePad = Layout.sidePadding
+        let gap = Layout.columnGap
+        let cellWidth = floor((width - 2 * sidePad - (columns - 1) * gap) / columns)
+        let cellHeight = SpringboardCell.iconSize + SpringboardCell.iconToLabelGap + SpringboardCell.labelHeight
 
         guard let layout = springboardCollectionView.collectionViewLayout as? UICollectionViewFlowLayout else { return }
-        layout.itemSize = CGSize(width: cellWidth, height: 96)
-        layout.sectionInset = UIEdgeInsets(top: 20, left: horizontalInset,
-                                            bottom: 20, right: horizontalInset)
+        layout.itemSize = CGSize(width: cellWidth, height: cellHeight)
+        layout.sectionInset = UIEdgeInsets(
+            top: gridTop,
+            left: sidePad,
+            bottom: gridBottomInset,
+            right: sidePad)
+
+        _ = height // (kept for future use if we need to anchor against physical bottom)
     }
 
     // ============================================================
     // MARK: - Import JAR from Files
     // ============================================================
 
-    private func addAppTapped() {
+    @objc private func addAppTapped() {
         let jarType = UTType(filenameExtension: "jar") ?? .data
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [jarType])
         picker.delegate = self
@@ -265,7 +316,7 @@ class AppsListViewController: UIViewController,
                 let letter = String(name.prefix(1)).uppercased()
                 let attrs: [NSAttributedString.Key: Any] = [
                     .foregroundColor: UIColor.white.withAlphaComponent(0.9),
-                    .font: UIFont.systemFont(ofSize: iconSize * 0.42, weight: .semibold)
+                    .font: UIFont.systemFont(ofSize: iconSize * 0.5, weight: .bold)
                 ]
                 let strSize = (letter as NSString).size(withAttributes: attrs)
                 (letter as NSString).draw(
@@ -274,9 +325,42 @@ class AppsListViewController: UIViewController,
                     withAttributes: attrs)
             }
 
+            // Faint diagonal sheen — matches design/library.jsx GameIcon (155deg, white .10).
+            let cgCtx = ctx.cgContext
+            cgCtx.saveGState()
+            UIBezierPath(roundedRect: rect, cornerRadius: SpringboardCell.iconCornerRadius).addClip()
+            if let sheen = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [
+                    UIColor.white.withAlphaComponent(0.10).cgColor,
+                    UIColor.white.withAlphaComponent(0).cgColor,
+                ] as CFArray,
+                locations: [0, 0.35]) {
+                let from = CGPoint(x: 0, y: 0)
+                let to = CGPoint(x: rect.width * 0.62, y: rect.height)
+                cgCtx.drawLinearGradient(sheen, start: from, end: to, options: [])
+            }
+            cgCtx.restoreGState()
+
+            // Inner top highlight + bottom shading — `inset` shadows from the reference.
+            let inner = UIBezierPath(rect: rect)
+            inner.addClip()
+            UIColor.white.withAlphaComponent(0.18).setStroke()
+            let topHL = UIBezierPath()
+            topHL.move(to: CGPoint(x: SpringboardCell.iconCornerRadius, y: 0.5))
+            topHL.addLine(to: CGPoint(x: rect.width - SpringboardCell.iconCornerRadius, y: 0.5))
+            topHL.lineWidth = 1
+            topHL.stroke()
+            UIColor.black.withAlphaComponent(0.28).setStroke()
+            let botSH = UIBezierPath()
+            botSH.move(to: CGPoint(x: SpringboardCell.iconCornerRadius, y: rect.height - 0.5))
+            botSH.addLine(to: CGPoint(x: rect.width - SpringboardCell.iconCornerRadius, y: rect.height - 0.5))
+            botSH.lineWidth = 1
+            botSH.stroke()
+
             let borderPath = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
                                            cornerRadius: SpringboardCell.iconCornerRadius - 0.5)
-            UIColor(white: 1.0, alpha: 0.12).setStroke()
+            UIColor.black.withAlphaComponent(0.5).setStroke()
             borderPath.lineWidth = 1
             borderPath.stroke()
         }
@@ -305,7 +389,9 @@ class AppsListViewController: UIViewController,
                         point: CGPoint) -> UIContextMenuConfiguration? {
         guard let indexPath = indexPaths.first else { return nil }
         let app = apps[indexPath.item]
-        return UIContextMenuConfiguration(actionProvider: { [weak self] _ in
+        return UIContextMenuConfiguration(identifier: indexPath as NSIndexPath,
+                                          previewProvider: nil,
+                                          actionProvider: { [weak self] _ in
             let ssEnabled = Self.is3DSupersampling(for: app)
             let toggle3D = UIAction(title: ssEnabled ? "Disable 3D Enhancement" : "Enable 3D Enhancement",
                                     subtitle: ssEnabled ? "Lower quality, but closer to original" : "Smoother 3D, but not original-accurate",
@@ -348,6 +434,34 @@ class AppsListViewController: UIViewController,
             let actions = UIMenu(options: .displayInline, children: [clearData, delete])
             return UIMenu(children: [settings, actions])
         })
+    }
+
+    // Context-menu preview — target only the icon (rounded). The cell's title stays
+    // exactly where it is; UIKit smoothly scales the icon up into the preview state,
+    // matching the iOS home-screen long-press feel.
+    func collectionView(_ collectionView: UICollectionView,
+                        contextMenuConfiguration configuration: UIContextMenuConfiguration,
+                        highlightPreviewForItemAt indexPath: IndexPath) -> UITargetedPreview? {
+        return makeIconTargetPreview(at: indexPath, in: collectionView)
+    }
+
+    func collectionView(_ collectionView: UICollectionView,
+                        contextMenuConfiguration configuration: UIContextMenuConfiguration,
+                        dismissalPreviewForItemAt indexPath: IndexPath) -> UITargetedPreview? {
+        return makeIconTargetPreview(at: indexPath, in: collectionView)
+    }
+
+    private func makeIconTargetPreview(at indexPath: IndexPath,
+                                       in collectionView: UICollectionView) -> UITargetedPreview? {
+        guard let cell = collectionView.cellForItem(at: indexPath) as? SpringboardCell else {
+            return nil
+        }
+        let params = UIPreviewParameters()
+        params.backgroundColor = .clear
+        params.visiblePath = UIBezierPath(
+            roundedRect: cell.iconView.bounds,
+            cornerRadius: SpringboardCell.iconCornerRadius)
+        return UITargetedPreview(view: cell.iconView, parameters: params)
     }
 
     // MARK: - Per-game settings
@@ -462,20 +576,15 @@ class AppsListViewController: UIViewController,
                                          render3dScale: render3dScale, fpsLimit: fps)
         gameVC.modalPresentationStyle = .fullScreen
 
+        // Zoom transition — expands from the tapped icon to the full game screen.
+        // No alignmentRectProvider here: previously we anchored the zoom on a placeholder
+        // icon inside the game screen, which forced UIKit to rotate the icon snapshot
+        // 90° on its way to a landscape orientation. Now the destination is just the
+        // game view itself, so UIKit scales without rotating the source icon.
         let itemIndex = indexPath.item
         let options = UIViewController.Transition.ZoomOptions()
         options.interactiveDismissShouldBegin = { _ in false }
-        // Zoom lands on the placeholder icon centered in the game screen
-        options.alignmentRectProvider = { context in
-            guard let gvc = context.zoomedViewController as? GameViewController,
-                  let placeholder = gvc.placeholderIconView else {
-                return .null
-            }
-            return placeholder.frame
-        }
-
-        gameVC.preferredTransition = .zoom(options: options) {
-            [weak self] _ in
+        gameVC.preferredTransition = .zoom(options: options) { [weak self] _ in
             guard let self,
                   let cell = self.springboardCollectionView.cellForItem(
                       at: IndexPath(item: itemIndex, section: 0)) as? SpringboardCell else {

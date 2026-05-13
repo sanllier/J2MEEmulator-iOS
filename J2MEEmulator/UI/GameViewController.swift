@@ -39,7 +39,6 @@ class GameViewController: UIViewController {
     private let lskButton = NeumoButton()
     private let rskButton = NeumoButton()
     private let softKeyHaptic = UIImpactFeedbackGenerator(style: .light)
-    private(set) var placeholderIconView: UIImageView?
 
     // Controls — created based on layoutMode
     private var joystickView: JoystickView?
@@ -91,24 +90,6 @@ class GameViewController: UIViewController {
 
         switch layoutMode {
         case .ngage: setupNGageLayout()
-        }
-
-        // Placeholder icon — visible until first game frame. Frame-positioned in layoutControls.
-        let iconIV = UIImageView(image: appIcon)
-        iconIV.contentMode = .center
-        view.addSubview(iconIV)
-        placeholderIconView = iconIV
-        view.bringSubviewToFront(closeButton)
-
-        // Fade out placeholder on first rendered frame
-        emulatorView.onFirstFrame = { [weak self] in
-            guard let icon = self?.placeholderIconView else { return }
-            UIView.animate(withDuration: 0.2) {
-                icon.alpha = 0
-            } completion: { _ in
-                icon.removeFromSuperview()
-                self?.placeholderIconView = nil
-            }
         }
 
         // Register native callbacks
@@ -314,12 +295,6 @@ class GameViewController: UIViewController {
         let closeGlyphPt = max(10, unit * 22)
         let cfg = UIImage.SymbolConfiguration(pointSize: closeGlyphPt, weight: .semibold)
         closeButton.configureAsIcon(image: UIImage(systemName: "xmark", withConfiguration: cfg))
-
-        // Center the placeholder app icon over the canvas.
-        placeholderIconView?.frame = CGRect(
-            x: bezelX + bezelPad,
-            y: bezelY + bezelPad,
-            width: canvasW, height: canvasH)
     }
 
     // MARK: - Soft keys
