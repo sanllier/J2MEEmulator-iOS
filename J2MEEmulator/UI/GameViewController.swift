@@ -213,27 +213,39 @@ class GameViewController: UIViewController {
         let physicalBottom = view.bounds.maxY
         let extendedHeight = physicalBottom - safe.minY   // from safe top to physical bottom
 
-        // Design reference artboard is 1556×720. Pick the smaller of height/width-constrained
-        // units so the layout fits both phone and tablet aspect ratios.
+        // `unit` is locked to the safe-area HEIGHT only — controls (dpad, numpad, soft
+        // keys, close, bezel padding/corner) all derive from it, so their sizes and Y
+        // positions stay the same regardless of which game is loaded. The canvas itself
+        // is then sized to fit in whatever horizontal space is left after subtracting
+        // the controls + outer safe margin.
         let canvasRatio = self.canvasRatio
-        let unitFromHeight = extendedHeight / 720.0
-        // screenW (canvas+pad) ≈ unit * (canvas.h * ratio + 2*pad) ≈ unit*(652*ratio + 28)
-        // side panels: unit * (dpad 360 + gap + outer ≥ 10) ×2
-        let sideGap: CGFloat = 40
-        let widthRequired = 652 * canvasRatio + 28 + 2 * (360 + sideGap + 10)
-        let unitFromWidth = safe.width / widthRequired
-        let unit = min(unitFromHeight, unitFromWidth)
+        let unit = extendedHeight / 720.0
 
-        // ── Screen bezel ──
-        // Top inset from safe.minY mirrors the bottom inset from view's physical bottom.
-        let topInset: CGFloat = unit * 20
+        // ── Fixed-size controls (per design, scaled by `unit`) ──
+        let dpadDesign: CGFloat = 320
+        let sideGapDesign: CGFloat = 40
+        let outerMarginDesign: CGFloat = 24
         let bezelPad = unit * 14
-        let bezelY   = safe.minY + topInset
-        let bezelH   = (physicalBottom - topInset) - bezelY
-        let canvasH  = bezelH - 2 * bezelPad
-        let canvasW  = canvasH * canvasRatio
-        let bezelW   = canvasW + 2 * bezelPad
-        let bezelX   = safe.midX - bezelW / 2
+        let topInset: CGFloat = unit * 20
+        let dpadSize     = unit * dpadDesign
+        let sideGapPx    = unit * sideGapDesign
+        let outerMarginPx = unit * outerMarginDesign
+
+        // ── Canvas / bezel — sized to fit in the remaining horizontal budget ──
+        let maxBezelH = (physicalBottom - topInset) - (safe.minY + topInset)
+        let maxBezelW = safe.width - 2 * (dpadSize + sideGapPx + outerMarginPx)
+
+        var canvasH = maxBezelH - 2 * bezelPad
+        var canvasW = canvasH * canvasRatio
+        if canvasW + 2 * bezelPad > maxBezelW {
+            canvasW = max(0, maxBezelW - 2 * bezelPad)
+            canvasH = canvasRatio > 0 ? canvasW / canvasRatio : canvasH
+        }
+        let bezelW = canvasW + 2 * bezelPad
+        let bezelH = canvasH + 2 * bezelPad
+        let bezelX = safe.midX - bezelW / 2
+        // Re-centre vertically in the available band when canvas got shrunk by width.
+        let bezelY = safe.minY + topInset + (maxBezelH - bezelH) / 2
         screenFrame.frame = CGRect(x: bezelX, y: bezelY, width: bezelW, height: bezelH)
         screenFrame.canvasPadding = bezelPad
         screenFrame.bezelCornerRadius = unit * 18
@@ -244,15 +256,15 @@ class GameViewController: UIViewController {
         emulatorView.layer.cornerRadius = screenFrame.canvasCornerRadius
         emulatorView.clipsToBounds = true
 
-        // Screen edges in view coords — used to anchor side controls.
+        // Screen edges in view coords — used to anchor side controls horizontally.
         let screenLeft  = bezelX + bezelPad
         let screenRight = bezelX + bezelW - bezelPad
 
         // ── D-pad / joystick ──
-        // CSS reference: width 360*unit, top 122. Side gap pulled out to `sideGap` (above).
+        // CSS reference: width ~320*unit (trimmed from the original 360 — read too large),
+        // top 122. Side gap pulled out to `sideGap` (above).
         if let joystick = joystickView {
-            let dpadSize = unit * 360
-            let dpadX = screenLeft - unit * sideGap - dpadSize
+            let dpadX = screenLeft - sideGapPx - dpadSize
             let dpadY = safe.minY + unit * 122
             joystick.frame = CGRect(x: dpadX, y: dpadY, width: dpadSize, height: dpadSize)
         }
@@ -262,7 +274,7 @@ class GameViewController: UIViewController {
         if let numpad = numpadView {
             let keypadW = unit * (3 * 92 + 2 * 12)
             let keypadH = unit * (4 * 92 + 3 * 12)
-            let keypadX = screenRight + unit * sideGap
+            let keypadX = screenRight + sideGapPx
             let keypadY = safe.minY + unit * 110
             numpad.frame = CGRect(x: keypadX, y: keypadY, width: keypadW, height: keypadH)
         }
@@ -280,13 +292,13 @@ class GameViewController: UIViewController {
 
         // ── Close ──
         // CSS: left 28, top 28, width/height 52.
-        let closeSize = unit * 52
+        let closeSize = unit * 72
         let closePad  = unit * 28
         closeButton.frame = CGRect(
             x: safe.minX + closePad,
             y: safe.minY + closePad,
             width: closeSize, height: closeSize)
-        closeButton.cornerRadius = unit * 16
+        closeButton.cornerRadius = unit * 22
 
         // Recompute key corners after layout.
         let keyCorner = unit * 20
@@ -298,8 +310,8 @@ class GameViewController: UIViewController {
         lskButton.configureAsSoft(glyph: "L", fontSize: softGlyphPt)
         rskButton.configureAsSoft(glyph: "R", fontSize: softGlyphPt)
 
-        // Re-render close glyph at the right point size — design icon is 22pt at 52pt button.
-        let closeGlyphPt = max(10, unit * 22)
+        // Re-render close glyph proportional to the new button size (≈42% of side).
+        let closeGlyphPt = max(12, unit * 30)
         let cfg = UIImage.SymbolConfiguration(pointSize: closeGlyphPt, weight: .semibold)
         closeButton.configureAsIcon(image: UIImage(systemName: "xmark", withConfiguration: cfg))
     }

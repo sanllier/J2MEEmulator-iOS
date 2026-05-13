@@ -62,7 +62,7 @@ class NumpadView: UIView {
         let gap = key * gapRatio
 
         let glyphSize = key * (28.0 / 92.0)
-        let subSize   = key * (13.0 / 92.0)
+        let subSize   = key * (15.0 / 92.0)
         let corner    = key * (20.0 / 92.0)
 
         for (i, btn) in keys.enumerated() {

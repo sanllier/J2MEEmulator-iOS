@@ -575,24 +575,6 @@ class AppsListViewController: UIViewController,
                                          canvasWidth: res.w, canvasHeight: res.h,
                                          render3dScale: render3dScale, fpsLimit: fps)
         gameVC.modalPresentationStyle = .fullScreen
-
-        // Zoom transition — expands from the tapped icon to the full game screen.
-        // No alignmentRectProvider here: previously we anchored the zoom on a placeholder
-        // icon inside the game screen, which forced UIKit to rotate the icon snapshot
-        // 90° on its way to a landscape orientation. Now the destination is just the
-        // game view itself, so UIKit scales without rotating the source icon.
-        let itemIndex = indexPath.item
-        let options = UIViewController.Transition.ZoomOptions()
-        options.interactiveDismissShouldBegin = { _ in false }
-        gameVC.preferredTransition = .zoom(options: options) { [weak self] _ in
-            guard let self,
-                  let cell = self.springboardCollectionView.cellForItem(
-                      at: IndexPath(item: itemIndex, section: 0)) as? SpringboardCell else {
-                return nil
-            }
-            return cell.iconView
-        }
-
         present(gameVC, animated: true)
     }
 }
