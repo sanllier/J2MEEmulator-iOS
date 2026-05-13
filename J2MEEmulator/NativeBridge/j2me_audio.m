@@ -6,10 +6,44 @@
 //
 
 #import <AVFoundation/AVFoundation.h>
+#import <objc/runtime.h>
 #include "j2me_audio.h"
 #include "jvm.h"
 #include "jvm_util.h"
 #include <stdio.h>
+
+// ============================================================
+// Native heap accounting — feeds gc_sum_heap so miniJVM can see
+// audio-buffer pressure and trigger GC reactively. Without this
+// a game with hundreds of MB of decoded PCM looks like a tiny
+// Java heap to the collector.
+// ============================================================
+extern s64 g_native_extra_heap;  // defined in minijvm/jvm/garbage.c
+
+static inline void audio_heap_add(s64 bytes) {
+    if (bytes > 0) __atomic_fetch_add(&g_native_extra_heap, bytes, __ATOMIC_RELAXED);
+}
+static inline void audio_heap_sub(s64 bytes) {
+    if (bytes > 0) __atomic_fetch_sub(&g_native_extra_heap, bytes, __ATOMIC_RELAXED);
+}
+
+// Each tracked player carries its source-buffer size as an associated
+// object — that way release sites don't need to look it up out of band.
+static const void *kPlayerHeapBytesKey = &kPlayerHeapBytesKey;
+
+static void set_player_heap_bytes(id player, s64 bytes) {
+    objc_setAssociatedObject(player, kPlayerHeapBytesKey, @(bytes),
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+static s64 take_player_heap_bytes(id player) {
+    NSNumber *n = objc_getAssociatedObject(player, kPlayerHeapBytesKey);
+    if (!n) return 0;
+    s64 bytes = (s64)[n longLongValue];
+    objc_setAssociatedObject(player, kPlayerHeapBytesKey, nil,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return bytes;
+}
 
 // ============================================================
 // Audio session setup
@@ -135,6 +169,7 @@ void j2me_audio_stop_all(void) {
         if (g_active_audio_players) {
             for (AVAudioPlayer *p in [g_active_audio_players copy]) {
                 [p stop];
+                audio_heap_sub(take_player_heap_bytes(p));
                 CFRelease((__bridge CFTypeRef)p);
             }
             [g_active_audio_players removeAllObjects];
@@ -150,18 +185,17 @@ void j2me_audio_stop_all(void) {
     }
 
     if (midiSnapshot.count > 0) {
-        if ([NSThread isMainThread]) {
+        void (^drainMidi)(void) = ^{
             for (AVMIDIPlayer *p in midiSnapshot) {
                 [p stop];
+                audio_heap_sub(take_player_heap_bytes(p));
                 CFRelease((__bridge CFTypeRef)p);
             }
+        };
+        if ([NSThread isMainThread]) {
+            drainMidi();
         } else {
-            dispatch_sync(dispatch_get_main_queue(), ^{
-                for (AVMIDIPlayer *p in midiSnapshot) {
-                    [p stop];
-                    CFRelease((__bridge CFTypeRef)p);
-                }
-            });
+            dispatch_sync(dispatch_get_main_queue(), drainMidi);
         }
     }
 
@@ -197,6 +231,8 @@ static s32 n_audioCreatePlayer(Runtime *runtime, JClass *clazz) {
     // Prevent ARC from releasing — bridge retain
     CFRetain((__bridge CFTypeRef)player);
     track_audio_player(player);
+    set_player_heap_bytes(player, length);
+    audio_heap_add(length);
     env->push_long(runtime->stack, (s64)(intptr_t)(__bridge void *)player);
     return RUNTIME_STATUS_NORMAL;
 }
@@ -228,6 +264,7 @@ static s32 n_audioClose(Runtime *runtime, JClass *clazz) {
         AVAudioPlayer *player = (__bridge AVAudioPlayer *)(void *)(intptr_t)handle;
         if (claim_audio_player(player)) {
             [player stop];
+            audio_heap_sub(take_player_heap_bytes(player));
             CFRelease((__bridge CFTypeRef)player);
         }
         // else: j2me_audio_stop_all already took ownership; do nothing.
@@ -339,6 +376,8 @@ static s32 n_audioCreateMidiPlayer(Runtime *runtime, JClass *clazz) {
     [player prepareToPlay];
     CFRetain((__bridge CFTypeRef)player);
     track_midi_player(player);
+    set_player_heap_bytes(player, length);
+    audio_heap_add(length);
     env->push_long(runtime->stack, (s64)(intptr_t)(__bridge void *)player);
     return RUNTIME_STATUS_NORMAL;
 }
@@ -370,6 +409,7 @@ static s32 n_audioMidiClose(Runtime *runtime, JClass *clazz) {
         AVMIDIPlayer *player = (__bridge AVMIDIPlayer *)(void *)(intptr_t)handle;
         if (claim_midi_player(player)) {
             [player stop];
+            audio_heap_sub(take_player_heap_bytes(player));
             CFRelease((__bridge CFTypeRef)player);
         }
         // else: j2me_audio_stop_all already took ownership; do nothing.

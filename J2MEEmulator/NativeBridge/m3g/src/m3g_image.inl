@@ -28,6 +28,13 @@
 #   error This file is for the OES API only
 #endif
 
+/* Native-memory accounting — see j2me_render.m for the counter. We
+ * track the base-level GL texture size for each Image; mipmaps add
+ * ~33% which we deliberately undercount (good enough for GC-pressure
+ * triggers, and avoids re-counting on every mipmap regeneration). */
+#include <stdint.h>
+extern int64_t g_native_extra_heap;
+
 /*----------------------------------------------------------------------
  * Data types
  *--------------------------------------------------------------------*/
@@ -170,6 +177,7 @@ static void m3gBindTextureObject(Image *img, M3Gbool mipmap)
 
         if (img->dirty) {
             M3G_ASSERT_PTR(pixels);
+            M3Gint newTexBytes;
             if (img->paletteBytes > 0) {
                 M3G_ASSERT(img->glFormat == GL_PALETTE8_RGBA8_OES
                     || img->glFormat == GL_PALETTE8_RGB8_OES);
@@ -181,6 +189,7 @@ static void m3gBindTextureObject(Image *img, M3Gbool mipmap)
                                        0,
                                        img->width * img->height + img->paletteBytes,
                                        pixels);
+                newTexBytes = img->width * img->height + img->paletteBytes;
             }
             else {
 #               if defined(M3G_GL_ES_1_1)
@@ -200,6 +209,23 @@ static void m3gBindTextureObject(Image *img, M3Gbool mipmap)
 #               else
                 img->mipmapsDirty = M3G_TRUE;
 #               endif
+                newTexBytes = img->width * img->height
+                              * m3gBytesPerPixel(img->internalFormat);
+            }
+            /* Rebase the heap accounting: if a previous upload already
+             * sized this Image, subtract its old footprint and add the
+             * new one. Image width/height are immutable, so in practice
+             * newTexBytes == trackedTexBytes after the first upload. */
+            if (img->trackedTexBytes != newTexBytes) {
+                if (img->trackedTexBytes > 0) {
+                    __atomic_fetch_sub(&g_native_extra_heap,
+                                       (int64_t)img->trackedTexBytes,
+                                       __ATOMIC_RELAXED);
+                }
+                __atomic_fetch_add(&g_native_extra_heap,
+                                   (int64_t)newTexBytes,
+                                   __ATOMIC_RELAXED);
+                img->trackedTexBytes = newTexBytes;
             }
             m3gUnmapObject(m3g, img->data);
             img->dirty = M3G_FALSE;

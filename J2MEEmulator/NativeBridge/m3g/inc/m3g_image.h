@@ -48,6 +48,11 @@ struct M3GImageImpl
     GLenum glFormat;
 #   if !defined(M3G_NGL_TEXTURE_API)
     GLuint texObject;
+    /* Bytes accounted into g_native_extra_heap for the base GL texture
+     * level of this image. Set when the texture is first uploaded;
+     * subtracted in m3gDestroyImage. 0 means "no GL texture allocated yet"
+     * (lazy upload hasn't happened). */
+    M3Gint trackedTexBytes;
     LargeImage *large;  /*! \internal \ */
 #   endif
 

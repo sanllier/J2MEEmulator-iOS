@@ -18,6 +18,16 @@
 #import <Foundation/Foundation.h>
 #include "EGL/egl.h"
 #include <stdio.h>
+#include <stdint.h>
+
+// Native-memory accounting: each FBO surface owns a color RBO (W*H*4 bytes)
+// and a depth RBO (W*H*3 bytes for DEPTH_COMPONENT24). Feed both into the
+// miniJVM-visible counter so GC sees M3G-side pressure.
+extern int64_t g_native_extra_heap;
+
+static inline int64_t fbo_surface_bytes(int w, int h) {
+    return (int64_t)w * (int64_t)h * 7;
+}
 
 /* ============================================================
  * Internal state
@@ -103,6 +113,9 @@ EGLBoolean eglTerminate(EGLDisplay dpy) {
         [EAGLContext setCurrentContext:g_m3g_eagl_context];
         for (int i = 0; i < g_m3g_surface_count; i++) {
             M3G_FBOSurface *surf = g_m3g_surfaces[i];
+            __atomic_fetch_sub(&g_native_extra_heap,
+                               fbo_surface_bytes(surf->width, surf->height),
+                               __ATOMIC_RELAXED);
             if (surf->fbo) glDeleteFramebuffersOES(1, &surf->fbo);
             if (surf->colorRB) glDeleteRenderbuffersOES(1, &surf->colorRB);
             if (surf->depthRB) glDeleteRenderbuffersOES(1, &surf->depthRB);
@@ -258,6 +271,7 @@ static EGLSurface createFBOSurface(int width, int height) {
     }
 
     track_surface(surf);
+    __atomic_fetch_add(&g_native_extra_heap, fbo_surface_bytes(width, height), __ATOMIC_RELAXED);
     [EAGLContext setCurrentContext:prev];
     return (EGLSurface)surf;
 }
@@ -296,6 +310,9 @@ EGLBoolean eglDestroySurface(EGLDisplay dpy, EGLSurface surface) {
     M3G_FBOSurface *surf = (M3G_FBOSurface *)surface;
 
     untrack_surface(surf);
+    __atomic_fetch_sub(&g_native_extra_heap,
+                       fbo_surface_bytes(surf->width, surf->height),
+                       __ATOMIC_RELAXED);
 
     if (g_m3g_eagl_context) {
         EAGLContext *prev = [EAGLContext currentContext];

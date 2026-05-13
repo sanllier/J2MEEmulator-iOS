@@ -91,6 +91,15 @@ public class NativeBridge {
     // MascotCapsule micro3D — read Canvas CGBitmapContext pixels as RGBA for GL texture upload
     public static native void mc3dReadCanvasPixels(long ctx, long dstAddr, int width, int height);
 
+    // Enqueue a GL texture ID for deletion the next time the MC3D context
+    // becomes current. Safe to call from any thread (including GC/finalize)
+    // because the actual glDeleteTextures is deferred to mc3dBind.
+    public static native void mc3dDeferDeleteTexture(int texId);
+    // Native-heap accounting — let miniJVM's GC see large GPU/audio buffers
+    // that would otherwise be invisible to its heap-pressure trigger.
+    public static native void mc3dNativeHeapAdd(long bytes);
+    public static native void mc3dNativeHeapSub(long bytes);
+
     // Platform
     public static native void platformRequest(String url);
 

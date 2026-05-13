@@ -71,14 +71,23 @@ public class Texture {
 	}
 
 	public final void dispose() {
-//		synchronized (Render.getRender()) {
-//			Render.getRender().bindEglContext();
-//			if (glIsTexture(mTexId)) {
-//				glDeleteTextures(1, new int[]{mTexId}, 0);
-//				mTexId = -1;
-//			}
-//			Render.getRender().releaseEglContext();
-//		}
+		// Idempotent: re-running dispose() (e.g. explicit close + later finalize)
+		// must not double-delete the GL texture or double-subtract heap bytes.
+		// Heap accounting is symmetric with getId(): add on successful upload,
+		// sub here only if mTexId actually held an uploaded texture.
+		if (mTexId > 0) {
+			// Defer the actual glDeleteTextures to the render thread.
+			// Direct deletion would require setting the MC3D EAGLContext
+			// current on the GC/finalize thread, which races with the
+			// active render thread (an EAGLContext can only be current on
+			// one thread at a time).
+			javax.microedition.lcdui.NativeBridge.mc3dDeferDeleteTexture(mTexId);
+			if (width > 0 && height > 0) {
+				javax.microedition.lcdui.NativeBridge.mc3dNativeHeapSub((long) width * height * 4L);
+			}
+			mTexId = -1;
+		}
+		pixels = null; // also release the CPU-side ARGB buffer
 	}
 
 	int getId() {
@@ -87,6 +96,12 @@ public class Texture {
 			return mTexId;
 		}
 		mTexId = loadTexture(pixels, width, height);
+		if (mTexId > 0) {
+			// Account for the GPU-side allocation now that it actually exists.
+			// dispose() will subtract the matching amount; getId() is idempotent
+			// because the glIsTexture check short-circuits the second call.
+			javax.microedition.lcdui.NativeBridge.mc3dNativeHeapAdd((long) width * height * 4L);
+		}
 		return mTexId;
 	}
 

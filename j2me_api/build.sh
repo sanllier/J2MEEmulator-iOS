@@ -3,14 +3,20 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MINIJVM_RT="$SCRIPT_DIR/../../miniJVM-2.0.0/binary/lib/minijvm_rt.jar"
+# Output dir doubles as the source of truth for minijvm_rt.jar — once the
+# runtime has been built into the iOS bundle's Resources/jars, reuse it
+# from there so we don't depend on the miniJVM repo sitting next to us.
 OUTPUT_DIR="$SCRIPT_DIR/../J2MEEmulator/Resources/jars"
+MINIJVM_RT="$OUTPUT_DIR/minijvm_rt.jar"
 
-if ! command -v javac &> /dev/null; then
+# macOS ships a /usr/bin/javac stub that exits with an error when no JDK is
+# installed — `command -v javac` succeeds against the stub, so we must
+# actually try to run it before trusting the PATH.
+if ! javac -version &> /dev/null; then
     if [ -f /opt/homebrew/opt/openjdk/bin/javac ]; then
         export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
     else
-        echo "ERROR: javac not found"; exit 1
+        echo "ERROR: working javac not found"; exit 1
     fi
 fi
 

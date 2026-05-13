@@ -36,4 +36,20 @@ public class MidiPlayer extends BasePlayer {
         }
         midiData = null;
     }
+
+    // Safety net for misbehaving MIDlets that never close their players.
+    // miniJVM's GC is infrequent so this fires late, but it still bounds
+    // the AVMIDIPlayer + SoundFont retention to a single GC cycle past
+    // last-use rather than leaking until j2me_audio_stop_all on shutdown.
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            if (nativeHandle != 0) {
+                NativeBridge.audioMidiClose(nativeHandle);
+                nativeHandle = 0;
+            }
+        } finally {
+            super.finalize();
+        }
+    }
 }

@@ -906,6 +906,11 @@ static s32 g_m3g_canvas_h = 0;
 static uint8_t *g_m3g_pixels = NULL;  /* M3G renders into this buffer */
 static s32 g_m3g_pixels_size = 0;
 
+/* Native-memory accounting — see j2me_render.m / m3g_egl_ios.m for the
+ * pattern. The pixel buffer can grow to 9MB at 240x320 × 3× supersample,
+ * which is not negligible compared with the JVM's 128MB heap budget. */
+extern s64 g_native_extra_heap;
+
 /* 3D supersampling scale factor — shared with MascotCapsule.
  * Set by jvm_bridge_init, exported from jvm_bridge.c. */
 extern int g_render_3d_scale;
@@ -941,9 +946,13 @@ static s32 n_Graphics3D_bindGraphics(Runtime *runtime, JClass *clazz) {
     /* Allocate/reuse pixel buffer at scaled resolution */
     s32 needed = scaledW * scaledH * 4;
     if (!g_m3g_pixels || g_m3g_pixels_size < needed) {
+        if (g_m3g_pixels_size > 0) {
+            __atomic_fetch_sub(&g_native_extra_heap, (s64)g_m3g_pixels_size, __ATOMIC_RELAXED);
+        }
         free(g_m3g_pixels);
         g_m3g_pixels = (uint8_t *)malloc(needed);
         g_m3g_pixels_size = needed;
+        __atomic_fetch_add(&g_native_extra_heap, (s64)needed, __ATOMIC_RELAXED);
     }
 
     /* Copy current Canvas content into M3G pixel buffer.
@@ -4941,6 +4950,9 @@ void j2me_m3g_cleanup(void) {
 
     /* Free CPU-side pixel buffer */
     if (g_m3g_pixels) {
+        if (g_m3g_pixels_size > 0) {
+            __atomic_fetch_sub(&g_native_extra_heap, (s64)g_m3g_pixels_size, __ATOMIC_RELAXED);
+        }
         free(g_m3g_pixels);
         g_m3g_pixels = NULL;
         g_m3g_pixels_size = 0;

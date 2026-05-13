@@ -68,7 +68,7 @@ static void m3gDestroyImage(Object *obj)
         m3gFreeObject(m3g, image->mipData);
     }
     M3G_ASSIGN_REF(image->copyOf, NULL);
-    
+
     if (image->powerOfTwo != image) {
         M3G_ASSIGN_REF(image->powerOfTwo, NULL);
     }
@@ -76,6 +76,17 @@ static void m3gDestroyImage(Object *obj)
 #   if !defined(M3G_NGL_TEXTURE_API)
     if (image->texObject) {
         m3gDeleteGLTextures(m3g, 1, &image->texObject);
+    }
+    if (image->trackedTexBytes > 0) {
+        /* Balance the add in m3g_image.inl. Safe to do before the actual
+         * glDeleteTextures (which is queued into deadGLObjects anyway):
+         * heap accounting tracks the *Image*'s ownership, not the live GL
+         * resource lifetime, so we can settle the books as the Image dies. */
+        extern int64_t g_native_extra_heap;
+        __atomic_fetch_sub(&g_native_extra_heap,
+                           (int64_t)image->trackedTexBytes,
+                           __ATOMIC_RELAXED);
+        image->trackedTexBytes = 0;
     }
     if (image->large != NULL) {
         m3gDestroyLargeImage(image);

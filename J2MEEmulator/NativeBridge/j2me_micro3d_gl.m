@@ -28,6 +28,98 @@ static GLuint g_mc3d_colorRB = 0;
 static GLuint g_mc3d_depthRB = 0;
 static int g_mc3d_width = 0;
 static int g_mc3d_height = 0;
+// Bytes of GPU memory currently accounted for the FBO color+depth RBs (W*H*7).
+// Cached so destroy/resize can subtract the exact amount that was added.
+static s64 g_mc3d_fbo_bytes = 0;
+
+// ============================================================
+// Native-memory accounting — visible to miniJVM via gc_sum_heap.
+// Covers MC3D FBO renderbuffers and GL textures uploaded via the
+// Texture.java path (which calls mc3dNativeHeapAdd explicitly).
+// ============================================================
+extern s64 g_native_extra_heap;
+
+static inline void mc3d_heap_add(s64 bytes) {
+    if (bytes > 0) __atomic_fetch_add(&g_native_extra_heap, bytes, __ATOMIC_RELAXED);
+}
+static inline void mc3d_heap_sub(s64 bytes) {
+    if (bytes > 0) __atomic_fetch_sub(&g_native_extra_heap, bytes, __ATOMIC_RELAXED);
+}
+
+// ============================================================
+// Deferred GL texture delete queue.
+//
+// Why: GL objects can only be deleted from a thread that has the
+// owning EAGLContext current. Texture.finalize() runs on miniJVM's
+// GC thread, which has no GL context bound — calling glDeleteTextures
+// there would be a no-op at best and crash at worst. Java code instead
+// enqueues the texture ID via mc3dDeferDeleteTexture(int), and the next
+// mc3dBind() drains the queue while the MC3D context is current.
+// ============================================================
+
+#define MC3D_DELETE_QUEUE_CAP 256
+static GLuint g_mc3d_delete_queue[MC3D_DELETE_QUEUE_CAP];
+static int    g_mc3d_delete_queue_len = 0;
+// pthread_mutex over spinlock here — finalize may already hold an
+// internal JVM lock, and pthread_mutex avoids priority-inversion if
+// the GC thread runs at a different scheduling band than the render thread.
+#include <pthread.h>
+static pthread_mutex_t g_mc3d_delete_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Caller must hold the MC3D EAGLContext current.
+static void drain_texture_delete_queue(void) {
+    GLuint local[MC3D_DELETE_QUEUE_CAP];
+    int n = 0;
+    pthread_mutex_lock(&g_mc3d_delete_lock);
+    n = g_mc3d_delete_queue_len;
+    if (n > 0) {
+        memcpy(local, g_mc3d_delete_queue, n * sizeof(GLuint));
+        g_mc3d_delete_queue_len = 0;
+    }
+    pthread_mutex_unlock(&g_mc3d_delete_lock);
+    if (n > 0) glDeleteTextures(n, local);
+}
+
+// ============================================================
+// VBO size table — maps a buffer ID to the bytes it owns, so that
+// glDeleteBuffers can subtract the right amount from the native-heap
+// counter, and so a glBufferData that resizes an existing buffer
+// settles the books before recording the new size.
+// ============================================================
+
+#define MC3D_VBO_TABLE_CAP 512
+typedef struct { GLuint id; s64 bytes; } MC3D_VBOEntry;
+static MC3D_VBOEntry g_mc3d_vbo_table[MC3D_VBO_TABLE_CAP];
+static int g_mc3d_vbo_table_len = 0;
+static pthread_mutex_t g_mc3d_vbo_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Record a buffer of `bytes` at id `id`. Returns the previous size
+// (0 if id was untracked), so the caller can adjust the heap counter
+// by the delta. Caller must hold no GL context — table-only operation.
+static s64 vbo_table_set(GLuint id, s64 bytes) {
+    s64 prev = 0;
+    pthread_mutex_lock(&g_mc3d_vbo_lock);
+    for (int i = 0; i < g_mc3d_vbo_table_len; i++) {
+        if (g_mc3d_vbo_table[i].id == id) {
+            prev = g_mc3d_vbo_table[i].bytes;
+            if (bytes > 0) {
+                g_mc3d_vbo_table[i].bytes = bytes;
+            } else {
+                // Removal: swap with last.
+                g_mc3d_vbo_table[i] = g_mc3d_vbo_table[--g_mc3d_vbo_table_len];
+            }
+            pthread_mutex_unlock(&g_mc3d_vbo_lock);
+            return prev;
+        }
+    }
+    if (bytes > 0 && g_mc3d_vbo_table_len < MC3D_VBO_TABLE_CAP) {
+        g_mc3d_vbo_table[g_mc3d_vbo_table_len++] = (MC3D_VBOEntry){id, bytes};
+    }
+    // If the table is full and we can't insert, the buffer simply
+    // doesn't get accounted — it leaks from the GC's view, but doesn't crash.
+    pthread_mutex_unlock(&g_mc3d_vbo_lock);
+    return prev;
+}
 
 // ============================================================
 // Helper macros
@@ -81,6 +173,8 @@ static s32 n_mc3dInit(Runtime *runtime, JClass *clazz) {
         glDeleteFramebuffers(1, &g_mc3d_fbo);
         glDeleteRenderbuffers(1, &g_mc3d_colorRB);
         glDeleteRenderbuffers(1, &g_mc3d_depthRB);
+        mc3d_heap_sub(g_mc3d_fbo_bytes);
+        g_mc3d_fbo_bytes = 0;
     }
 
     // Create offscreen FBO
@@ -104,6 +198,9 @@ static s32 n_mc3dInit(Runtime *runtime, JClass *clazz) {
 
     g_mc3d_width = w;
     g_mc3d_height = h;
+    // Color RB is RGBA8 (4 bytes/px), depth RB is DEPTH24 (3 bytes/px).
+    g_mc3d_fbo_bytes = (s64)w * (s64)h * 7;
+    mc3d_heap_add(g_mc3d_fbo_bytes);
     printf("[micro3d] Initialized FBO %dx%d\n", w, h);
 
     [EAGLContext setCurrentContext:prev];
@@ -113,6 +210,9 @@ static s32 n_mc3dInit(Runtime *runtime, JClass *clazz) {
 static s32 n_mc3dBind(Runtime *runtime, JClass *clazz) {
     g_mc3d_prev_context = [EAGLContext currentContext];
     [EAGLContext setCurrentContext:g_mc3d_context];
+    // While we hold the context current, reap any textures that
+    // were enqueued for delete from other threads (typically GC).
+    drain_texture_delete_queue();
     glBindFramebuffer(GL_FRAMEBUFFER, g_mc3d_fbo);
     return RUNTIME_STATUS_NORMAL;
 }
@@ -127,11 +227,16 @@ static s32 n_mc3dRelease(Runtime *runtime, JClass *clazz) {
 static s32 n_mc3dDestroy(Runtime *runtime, JClass *clazz) {
     if (g_mc3d_context) {
         [EAGLContext setCurrentContext:g_mc3d_context];
+        // Drain any deferred deletes before we release the context —
+        // otherwise they pile up forever after MIDlet shutdown.
+        drain_texture_delete_queue();
         if (g_mc3d_fbo) {
             glDeleteFramebuffers(1, &g_mc3d_fbo);
             glDeleteRenderbuffers(1, &g_mc3d_colorRB);
             glDeleteRenderbuffers(1, &g_mc3d_depthRB);
             g_mc3d_fbo = 0;
+            mc3d_heap_sub(g_mc3d_fbo_bytes);
+            g_mc3d_fbo_bytes = 0;
         }
         [EAGLContext setCurrentContext:nil];
         g_mc3d_context = nil;
@@ -594,7 +699,13 @@ static s32 n_glDeleteBuffers(Runtime *runtime, JClass *clazz) {
     Instance *arr = (Instance *)ENV->localvar_getRefer(runtime->localvar, 1);
     s32 offset    = ENV->localvar_getInt(runtime->localvar, 2);
     GLuint *ids   = (GLuint *)(arr ? (s32 *)arr->arr_body + offset : NULL);
-    if (ids) glDeleteBuffers(n, ids);
+    if (ids) {
+        for (GLsizei i = 0; i < n; i++) {
+            if (ids[i] == 0) continue;
+            mc3d_heap_sub(vbo_table_set(ids[i], 0));
+        }
+        glDeleteBuffers(n, ids);
+    }
     return RUNTIME_STATUS_NORMAL;
 }
 
@@ -611,6 +722,21 @@ static s32 n_glBufferDataAddr(Runtime *runtime, JClass *clazz) {
     s64 addr       = ENV->localvar_getLong_2slot(runtime->localvar, 2);
     GLenum usage   = (GLenum)ENV->localvar_getInt(runtime->localvar, 4); // long takes 2 slots
     glBufferData(target, sz, (const void *)(intptr_t)addr, usage);
+
+    // Native-heap accounting: bind queries are cheap on GLES, and getting
+    // the right binding name keeps the entry tied to the actual buffer id,
+    // not just the target slot.
+    GLenum pname = (target == GL_ELEMENT_ARRAY_BUFFER)
+                   ? GL_ELEMENT_ARRAY_BUFFER_BINDING
+                   : GL_ARRAY_BUFFER_BINDING;
+    GLint bound = 0;
+    glGetIntegerv(pname, &bound);
+    if (bound > 0) {
+        s64 prev = vbo_table_set((GLuint)bound, (s64)sz);
+        s64 delta = (s64)sz - prev;
+        if (delta > 0)      mc3d_heap_add(delta);
+        else if (delta < 0) mc3d_heap_sub(-delta);
+    }
     return RUNTIME_STATUS_NORMAL;
 }
 
@@ -922,6 +1048,36 @@ static s32 n_transform(Runtime *runtime, JClass *clazz) {
 }
 
 // ============================================================
+// Native heap accounting + deferred texture delete (called from Java)
+// ============================================================
+
+static s32 n_mc3dDeferDeleteTexture(Runtime *runtime, JClass *clazz) {
+    GLuint texId = (GLuint)ENV->localvar_getInt(runtime->localvar, 0);
+    if (texId == 0) return RUNTIME_STATUS_NORMAL;
+    pthread_mutex_lock(&g_mc3d_delete_lock);
+    if (g_mc3d_delete_queue_len < MC3D_DELETE_QUEUE_CAP) {
+        g_mc3d_delete_queue[g_mc3d_delete_queue_len++] = texId;
+    }
+    // If the queue is full we drop the ID — the texture leaks until the
+    // MC3D context is destroyed. This is rare (256 outstanding deletes is
+    // a lot) and never crashes.
+    pthread_mutex_unlock(&g_mc3d_delete_lock);
+    return RUNTIME_STATUS_NORMAL;
+}
+
+static s32 n_mc3dNativeHeapAdd(Runtime *runtime, JClass *clazz) {
+    s64 bytes = ENV->localvar_getLong_2slot(runtime->localvar, 0);
+    mc3d_heap_add(bytes);
+    return RUNTIME_STATUS_NORMAL;
+}
+
+static s32 n_mc3dNativeHeapSub(Runtime *runtime, JClass *clazz) {
+    s64 bytes = ENV->localvar_getLong_2slot(runtime->localvar, 0);
+    mc3d_heap_sub(bytes);
+    return RUNTIME_STATUS_NORMAL;
+}
+
+// ============================================================
 // Native method registration table
 // ============================================================
 
@@ -1016,6 +1172,11 @@ static java_native_method mc3d_methods[] = {
     // Blit to Graphics
     {BRIDGE_CLS, "mc3dBlitToGraphics",    "(JJII)V",                         n_mc3dBlitToGraphics},
     {BRIDGE_CLS, "mc3dReadCanvasPixels", "(JJII)V",                         n_mc3dReadCanvasPixels},
+
+    // Native-heap accounting + deferred texture delete (see Texture.java)
+    {BRIDGE_CLS, "mc3dDeferDeleteTexture", "(I)V", n_mc3dDeferDeleteTexture},
+    {BRIDGE_CLS, "mc3dNativeHeapAdd",      "(J)V", n_mc3dNativeHeapAdd},
+    {BRIDGE_CLS, "mc3dNativeHeapSub",      "(J)V", n_mc3dNativeHeapSub},
 };
 
 void j2me_micro3d_gl_reg_natives(MiniJVM *jvm) {
@@ -1027,12 +1188,14 @@ void j2me_micro3d_gl_reg_natives(MiniJVM *jvm) {
 void j2me_micro3d_gl_cleanup(void) {
     if (g_mc3d_context) {
         [EAGLContext setCurrentContext:g_mc3d_context];
+        drain_texture_delete_queue();
         if (g_mc3d_fbo) {
             glDeleteFramebuffers(1, &g_mc3d_fbo);
             g_mc3d_fbo = 0;
         }
         if (g_mc3d_colorRB) { glDeleteRenderbuffers(1, &g_mc3d_colorRB); g_mc3d_colorRB = 0; }
         if (g_mc3d_depthRB) { glDeleteRenderbuffers(1, &g_mc3d_depthRB); g_mc3d_depthRB = 0; }
+        if (g_mc3d_fbo_bytes > 0) { mc3d_heap_sub(g_mc3d_fbo_bytes); g_mc3d_fbo_bytes = 0; }
         [EAGLContext setCurrentContext:nil];
         g_mc3d_context = nil;
         g_mc3d_prev_context = nil;
@@ -1040,4 +1203,19 @@ void j2me_micro3d_gl_cleanup(void) {
         g_mc3d_height = 0;
         printf("[micro3d] GL context cleaned up\n");
     }
+    // Any pending IDs from textures whose finalize ran after MC3D shut down
+    // have nothing to delete against; just drop them so the queue is fresh
+    // if the user starts a new MIDlet.
+    pthread_mutex_lock(&g_mc3d_delete_lock);
+    g_mc3d_delete_queue_len = 0;
+    pthread_mutex_unlock(&g_mc3d_delete_lock);
+
+    // Flush the VBO accounting table — any bytes still tracked here would
+    // otherwise leak forward into the next MIDlet's heap-pressure budget.
+    pthread_mutex_lock(&g_mc3d_vbo_lock);
+    s64 leftover = 0;
+    for (int i = 0; i < g_mc3d_vbo_table_len; i++) leftover += g_mc3d_vbo_table[i].bytes;
+    g_mc3d_vbo_table_len = 0;
+    pthread_mutex_unlock(&g_mc3d_vbo_lock);
+    mc3d_heap_sub(leftover);
 }

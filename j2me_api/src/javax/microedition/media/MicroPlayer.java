@@ -51,4 +51,18 @@ public class MicroPlayer extends BasePlayer {
         super.setLoopCount(count);
         if (nativeHandle != 0) NativeBridge.audioSetLoop(nativeHandle, count == -1 ? -1 : count - 1);
     }
+
+    // Safety net for misbehaving MIDlets that never close their players —
+    // see MidiPlayer.finalize for the same pattern.
+    @Override
+    protected void finalize() throws Throwable {
+        try {
+            if (nativeHandle != 0) {
+                NativeBridge.audioClose(nativeHandle);
+                nativeHandle = 0;
+            }
+        } finally {
+            super.finalize();
+        }
+    }
 }
