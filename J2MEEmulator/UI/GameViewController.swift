@@ -66,6 +66,13 @@ class GameViewController: UIViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
+        // Detach native-side callbacks before anything else — zombie JVM
+        // threads can still call into n_flushToScreen / n_formShow during the
+        // post-shutdown window, and we don't want them invoking a Swift
+        // @convention(c) closure whose captured weak refs may point at a
+        // freshly-recycled controller.
+        j2me_render_set_flush_callback(nil)
+        j2me_ui_set_callback(nil)
         setGlobalEmulatorView(nil)
         alertTimeoutWork?.cancel()
     }

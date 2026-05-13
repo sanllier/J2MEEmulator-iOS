@@ -49,9 +49,11 @@ static s64 take_player_heap_bytes(id player) {
 // Audio session setup
 // ============================================================
 
+// Reset by j2me_audio_stop_all so the next MIDlet picks up a fresh session.
+static BOOL g_audio_session_active = NO;
+
 static void ensureAudioSession(void) {
-    static BOOL initialized = NO;
-    if (!initialized) {
+    if (!g_audio_session_active) {
         NSError *error = nil;
         [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:&error];
         [[AVAudioSession sharedInstance] setActive:YES error:&error];
@@ -59,7 +61,7 @@ static void ensureAudioSession(void) {
             printf("[J2ME Audio] Audio session error: %s\n",
                    [[error localizedDescription] UTF8String]);
         }
-        initialized = YES;
+        g_audio_session_active = YES;
     }
 }
 
@@ -197,6 +199,19 @@ void j2me_audio_stop_all(void) {
         } else {
             dispatch_sync(dispatch_get_main_queue(), drainMidi);
         }
+    }
+
+    // Release the shared AVAudioSession back to the system so other apps
+    // (and the rest of the host app) don't keep an active audio category
+    // pinned by a no-longer-playing MIDlet. ensureAudioSession() reactivates
+    // it lazily on the next play; clear the cached flag so it actually does.
+    if (g_audio_session_active) {
+        NSError *deactErr = nil;
+        [[AVAudioSession sharedInstance]
+            setActive:NO
+            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+            error:&deactErr];
+        g_audio_session_active = NO;
     }
 
     printf("[J2ME Audio] All players stopped and released\n");

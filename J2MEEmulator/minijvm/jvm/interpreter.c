@@ -124,11 +124,20 @@ static s32 filterClassName(Utf8String *clsName) {
     return 0;
 }
 
+// Backward-branch hook: piggyback the shutdown check on the same site so a
+// tight Java loop (no method calls, no GC pause condition) can't ignore
+// thread_stop_all forever. ret/label_exit_while are scoped to
+// execute_method_impl, which is the only function that calls this macro.
 #define check_gc_pause(offset){\
-    if (offset < 0 && thrd_info->suspend_count) {\
-        \
-        runtime->stack->sp = sp;\
-        check_suspend_and_pause(runtime);\
+    if (offset < 0) {\
+        if (thrd_info->is_stop) {\
+            ret = RUNTIME_STATUS_ERROR;\
+            goto label_exit_while;\
+        }\
+        if (thrd_info->suspend_count) {\
+            runtime->stack->sp = sp;\
+            check_suspend_and_pause(runtime);\
+        }\
     }\
 }
 
