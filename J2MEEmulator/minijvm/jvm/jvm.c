@@ -366,15 +366,33 @@ s32 jvm_init(MiniJVM *jvm, c8 *p_bootclasspath, c8 *p_classpath) {
 void jvm_destroy(MiniJVM *jvm) {
     Runtime *parent = runtime_create(jvm);
 
+    // Launch all shutdown hooks concurrently (per the java.lang.Runtime
+    // contract) and give them a bounded budget to finish. The previous code
+    // ran them serially with an unbounded thrd_join — a hook that loops
+    // forever, or blocks on slow IO, would wedge jvm_destroy permanently.
+    // jvm_destroy runs on the app's background queue and gates dismissal of
+    // the game screen, so an unbounded wait freezes the UI with no recovery.
+    // jthread_init adds each hook to jvm->thread_list, so any hook that
+    // overruns the budget is still caught by the thread_stop_all +
+    // force-zombie path below.
+    s32 hook_count = 0;
     while (parent && jvm->shutdown_hook->length) {
         Instance *inst = arraylist_get_value(jvm->shutdown_hook, 0);
         arraylist_remove_at(jvm->shutdown_hook, 0);
-
-        //there is an week is that the hook thread is serialized execution,
-        // because the hook thread may be not inserted into the thread list,
-        // then vm is destroyed
         thrd_t t = jthread_start(inst, parent);
-        thrd_join(t, NULL);
+        thrd_detach(t);
+        hook_count++;
+    }
+    if (hook_count > 0) {
+        // Bounded grace period for hooks to do their cleanup work. The loop
+        // exits early once every thread is zombie; threadlist_count_active
+        // is the same thread-safe check used by the force-zombie wait below.
+        s32 hook_wait = 0;
+        const s32 hook_max_wait = 75; // 75 * 20ms = 1.5s budget
+        while (threadlist_count_active(jvm) > 0 && hook_wait < hook_max_wait) {
+            threadSleep(20);
+            hook_wait++;
+        }
     }
     runtime_destroy(parent);
     parent = NULL;
