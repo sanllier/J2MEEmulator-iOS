@@ -325,42 +325,11 @@ class AppsListViewController: UIViewController,
                     withAttributes: attrs)
             }
 
-            // Faint diagonal sheen — matches design/library.jsx GameIcon (155deg, white .10).
-            let cgCtx = ctx.cgContext
-            cgCtx.saveGState()
-            UIBezierPath(roundedRect: rect, cornerRadius: SpringboardCell.iconCornerRadius).addClip()
-            if let sheen = CGGradient(
-                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: [
-                    UIColor.white.withAlphaComponent(0.10).cgColor,
-                    UIColor.white.withAlphaComponent(0).cgColor,
-                ] as CFArray,
-                locations: [0, 0.35]) {
-                let from = CGPoint(x: 0, y: 0)
-                let to = CGPoint(x: rect.width * 0.62, y: rect.height)
-                cgCtx.drawLinearGradient(sheen, start: from, end: to, options: [])
-            }
-            cgCtx.restoreGState()
-
-            // Inner top highlight + bottom shading — `inset` shadows from the reference.
-            let inner = UIBezierPath(rect: rect)
-            inner.addClip()
-            UIColor.white.withAlphaComponent(0.18).setStroke()
-            let topHL = UIBezierPath()
-            topHL.move(to: CGPoint(x: SpringboardCell.iconCornerRadius, y: 0.5))
-            topHL.addLine(to: CGPoint(x: rect.width - SpringboardCell.iconCornerRadius, y: 0.5))
-            topHL.lineWidth = 1
-            topHL.stroke()
-            UIColor.black.withAlphaComponent(0.28).setStroke()
-            let botSH = UIBezierPath()
-            botSH.move(to: CGPoint(x: SpringboardCell.iconCornerRadius, y: rect.height - 0.5))
-            botSH.addLine(to: CGPoint(x: rect.width - SpringboardCell.iconCornerRadius, y: rect.height - 0.5))
-            botSH.lineWidth = 1
-            botSH.stroke()
-
+            // Uniform 1pt translucent border around the whole rounded icon — no sheen,
+            // no top/bottom inset accents (those read as uneven "glints").
             let borderPath = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
                                            cornerRadius: SpringboardCell.iconCornerRadius - 0.5)
-            UIColor.black.withAlphaComponent(0.5).setStroke()
+            UIColor.white.withAlphaComponent(0.12).setStroke()
             borderPath.lineWidth = 1
             borderPath.stroke()
         }
