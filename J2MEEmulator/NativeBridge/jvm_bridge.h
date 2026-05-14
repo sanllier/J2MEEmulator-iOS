@@ -38,6 +38,19 @@ void jvm_bridge_request_stop(void);
 /// Check if stop has been requested. Called from native methods on JVM thread.
 int jvm_bridge_is_stop_requested(void);
 
+/// Request the running MIDlet be paused (non-blocking, thread-safe).
+/// Called from the main UI thread when the app resigns active / backgrounds.
+/// The Display event loop detects this and calls the MIDlet's pauseApp().
+void jvm_bridge_request_pause(void);
+
+/// Clear the pause request — the running MIDlet should resume.
+/// Called from the main UI thread when the app becomes active again.
+/// The Display event loop detects this and calls the MIDlet's startApp().
+void jvm_bridge_request_resume(void);
+
+/// Check if a pause is currently requested. Called from native methods on JVM thread.
+int jvm_bridge_is_pause_requested(void);
+
 #ifdef __cplusplus
 }
 #endif

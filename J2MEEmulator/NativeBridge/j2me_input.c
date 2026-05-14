@@ -125,6 +125,15 @@ static s32 n_isStopRequested(Runtime *runtime, JClass *clazz) {
 }
 
 // ============================================================
+// Native method: NativeBridge.isPauseRequested() → boolean
+// ============================================================
+
+static s32 n_isPauseRequested(Runtime *runtime, JClass *clazz) {
+    push_int(runtime->stack, jvm_bridge_is_pause_requested() ? 1 : 0);
+    return RUNTIME_STATUS_NORMAL;
+}
+
+// ============================================================
 // Reset (call between game sessions)
 // ============================================================
 
@@ -143,6 +152,7 @@ void j2me_input_reset(void) {
 static java_native_method j2me_input_methods[] = {
     {CLS, "pollInputEvent", "()[I", n_pollInputEvent},
     {CLS, "isStopRequested", "()Z", n_isStopRequested},
+    {CLS, "isPauseRequested", "()Z", n_isPauseRequested},
 };
 
 #undef CLS

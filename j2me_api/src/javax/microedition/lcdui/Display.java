@@ -143,6 +143,32 @@ public class Display {
                 break;
             }
 
+            // 0b. Platform-driven pause/resume (iOS background/foreground).
+            // Mark the state before invoking the lifecycle method so a throwing
+            // pauseApp()/startApp() still leaves us in a consistent state.
+            boolean platformPauseReq = NativeBridge.isPauseRequested();
+            if (platformPauseReq && !MIDlet.isPlatformPaused()) {
+                System.out.println("[Display] Platform pause — calling pauseApp()");
+                MIDlet.markPlatformPaused();
+                if (currentMIDlet != null) {
+                    try {
+                        currentMIDlet.callPauseApp();
+                    } catch (Exception e) {
+                        System.out.println("[Display] pauseApp error: " + e.getMessage());
+                    }
+                }
+            } else if (!platformPauseReq && MIDlet.isPlatformPaused()) {
+                System.out.println("[Display] Platform resume — calling startApp()");
+                MIDlet.markPlatformResumed();
+                if (currentMIDlet != null) {
+                    try {
+                        currentMIDlet.callStartApp();
+                    } catch (Exception e) {
+                        System.out.println("[Display] startApp error: " + e.getMessage());
+                    }
+                }
+            }
+
             // 1. Poll native input events and post to EventQueue
             int[] nativeEvent;
             while ((nativeEvent = NativeBridge.pollInputEvent()) != null) {

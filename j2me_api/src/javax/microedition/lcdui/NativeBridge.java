@@ -56,6 +56,9 @@ public class NativeBridge {
     // Lifecycle — check if native side requested MIDlet stop
     public static native boolean isStopRequested();
 
+    // Lifecycle — check if native side requested MIDlet pause (app backgrounded)
+    public static native boolean isPauseRequested();
+
     // UI (Forms/Lists/Alerts)
     public static native void formBegin(String title, int type);
     public static native void formAddStringItem(String label, String text, int appearance);

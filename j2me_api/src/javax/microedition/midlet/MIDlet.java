@@ -27,6 +27,9 @@ public abstract class MIDlet {
     private static volatile boolean destroyRequested = false;
     private static volatile boolean resumeRequested = false;
     private static volatile boolean paused = false;
+    // Platform-driven pause (iOS background/foreground). Distinct from `paused`,
+    // which tracks MIDlet-driven pause via notifyPaused()/resumeRequest().
+    private static volatile boolean platformPaused = false;
 
     protected MIDlet() {
     }
@@ -74,7 +77,16 @@ public abstract class MIDlet {
         return false;
     }
     public static boolean isPaused() { return paused; }
-    public static void resetDestroyRequest() { destroyRequested = false; paused = false; resumeRequested = false; }
+    public static void resetDestroyRequest() {
+        destroyRequested = false; paused = false; resumeRequested = false; platformPaused = false;
+    }
+
+    // --- Platform-driven pause/resume (used by Display event loop) ---
+    // The host platform (iOS) drives these when the app backgrounds/foregrounds;
+    // they do not touch the MIDlet-driven `paused`/`resumeRequested` flags.
+    public static void markPlatformPaused() { platformPaused = true; }
+    public static void markPlatformResumed() { platformPaused = false; }
+    public static boolean isPlatformPaused() { return platformPaused; }
 
     /**
      * Called every time the MIDlet becomes active.

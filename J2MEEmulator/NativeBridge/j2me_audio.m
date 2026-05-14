@@ -58,6 +58,22 @@ static s64 take_player_heap_bytes(id player) {
 // (-10851), silently losing MIDI playback for the rest of the session.
 // Apple's apps generally leave the session active for the app's lifetime.
 
+// Re-activate the shared audio session after a system interruption (incoming
+// call, Siri, alarm). iOS deactivates our session for the duration of the
+// interruption and does NOT silently restore it afterwards — without an
+// explicit setActive:YES every subsequent AVAudioPlayer / AVMIDIPlayer play()
+// stays silent for the rest of the MIDlet's life.
+static void reactivateAudioSession(void) {
+    NSError *err = nil;
+    [[AVAudioSession sharedInstance] setActive:YES error:&err];
+    if (err) {
+        printf("[J2ME Audio] interruption reactivate error: %s\n",
+               [[err localizedDescription] UTF8String]);
+    } else {
+        printf("[J2ME Audio] audio session reactivated after interruption\n");
+    }
+}
+
 static void ensureAudioSession(void) {
     static BOOL initialized = NO;
     if (initialized) return;
@@ -73,6 +89,24 @@ static void ensureAudioSession(void) {
                [[actErr localizedDescription] UTF8String]);
         return; // leave initialized=NO so a subsequent play tries again
     }
+
+    // Subscribe once for the app's lifetime — when an interruption ends and
+    // the system says we should resume, re-activate the session. The block
+    // runs on the main queue, so setActive: is called off the JVM thread.
+    [[NSNotificationCenter defaultCenter]
+        addObserverForName:AVAudioSessionInterruptionNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
+        NSNumber *typeVal = note.userInfo[AVAudioSessionInterruptionTypeKey];
+        if (typeVal.unsignedIntegerValue != AVAudioSessionInterruptionTypeEnded) return;
+        NSNumber *optsVal = note.userInfo[AVAudioSessionInterruptionOptionKey];
+        if (optsVal &&
+            (optsVal.unsignedIntegerValue & AVAudioSessionInterruptionOptionShouldResume)) {
+            reactivateAudioSession();
+        }
+    }];
+
     initialized = YES;
 }
 
