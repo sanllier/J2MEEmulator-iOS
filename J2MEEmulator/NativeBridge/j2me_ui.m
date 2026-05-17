@@ -257,16 +257,20 @@ static s32 n_platformRequest(Runtime *runtime, JClass *clazz) {
 
     Utf8String *u = utf8_create();
     env->jstring_2_utf8(jurl, u, runtime);
-    const char *urlStr = utf8_cstr(u);
+    // Copy into an NSString *before* freeing the source buffer — dispatch_async
+    // returns immediately, so a const char* captured into the Utf8String would
+    // be a use-after-free by the time the main thread ran the block. NSString
+    // takes its own copy of the bytes and is retained by the block.
+    NSString *urlStr = [NSString stringWithUTF8String:utf8_cstr(u)];
+    utf8_destroy(u);
+    if (!urlStr) return RUNTIME_STATUS_NORMAL;  // not valid UTF-8
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSURL *url = [NSURL URLWithString:[NSString stringWithUTF8String:urlStr]];
+        NSURL *url = [NSURL URLWithString:urlStr];
         if (url) {
             [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
         }
     });
-
-    utf8_destroy(u);
     return RUNTIME_STATUS_NORMAL;
 }
 
