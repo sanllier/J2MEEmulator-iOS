@@ -14,7 +14,6 @@
 
 static MiniJVM *g_jvm = NULL;
 static atomic_int g_jvm_stop_requested = 0;
-static atomic_int g_jvm_pause_requested = 0;
 
 /* 3D supersampling scale — shared by M3G (reads directly) and MC3D (via system property) */
 int g_render_3d_scale = 1;
@@ -26,11 +25,10 @@ int jvm_bridge_init(const char *res_root, const char *save_root, const char *mid
         printf("[JVM Bridge] JVM already initialized\n");
         return -1;
     }
-    // Note: g_jvm_stop_requested / g_jvm_pause_requested are NOT reset here —
-    // they are reset in jvm_bridge_destroy() after the previous session.
-    // Resetting them here would race with the main thread, which may have
-    // already set a flag (backTapped, or sceneWillResignActive firing while
-    // this function still runs on the background thread).
+    // Note: g_jvm_stop_requested is NOT reset here — it is reset in
+    // jvm_bridge_destroy() after the previous session.  Resetting it here
+    // would race with backTapped() which may have already set the flag
+    // before this function runs on the background thread.
 
     // Build bootclasspath: minijvm_rt.jar
     char bootclasspath[1024];
@@ -158,7 +156,6 @@ void jvm_bridge_destroy(void) {
         j2me_m3g_cleanup();
         j2me_render_cleanup(); // also resets render_stopped flag
         atomic_store(&g_jvm_stop_requested, 0);
-        atomic_store(&g_jvm_pause_requested, 0);
 
         printf("[JVM Bridge] JVM destroyed, native state cleaned up\n");
     }
@@ -171,18 +168,4 @@ void jvm_bridge_request_stop(void) {
 
 int jvm_bridge_is_stop_requested(void) {
     return atomic_load(&g_jvm_stop_requested);
-}
-
-void jvm_bridge_request_pause(void) {
-    printf("[JVM Bridge] Pause requested\n");
-    atomic_store(&g_jvm_pause_requested, 1);
-}
-
-void jvm_bridge_request_resume(void) {
-    printf("[JVM Bridge] Resume requested\n");
-    atomic_store(&g_jvm_pause_requested, 0);
-}
-
-int jvm_bridge_is_pause_requested(void) {
-    return atomic_load(&g_jvm_pause_requested);
 }

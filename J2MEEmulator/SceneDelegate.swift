@@ -47,18 +47,13 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
-        // App regained focus — clear the pause request so the Display event
-        // loop calls the running MIDlet's startApp() again. No-op if no MIDlet
-        // is running (the flag is simply read by nothing).
-        jvm_bridge_request_resume()
+        // Called when the scene has moved from an inactive state to an active state.
+        // Use this method to restart any tasks that were paused (or not yet started) when the scene was inactive.
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
-        // App is about to lose focus (incoming call, app switcher, Control
-        // Center, Siri). Ask the running MIDlet to pause via the MIDP
-        // lifecycle so it can stop its game loop — the Display event loop
-        // picks this up and calls pauseApp().
-        jvm_bridge_request_pause()
+        // Called when the scene will move from an active state to an inactive state.
+        // This may occur due to temporary interruptions (ex. an incoming phone call).
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
