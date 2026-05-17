@@ -34,19 +34,29 @@ public class MidiPlayer {
 		String location = filename.substring(filename.indexOf('/'));
 		if (player != null) {
 			player.close();
+			player = null;
 		}
+		InputStream is = null;
 		try {
-			InputStream is = null;
+			// Original code passed `is = null` straight to Manager.createPlayer,
+			// which raises IllegalArgumentException (not caught here) and then
+			// dereferenced the null stream — every Motorola MIDI play() crashed.
+			// Load the resource from the MIDlet JAR instead.
+			is = MidiPlayer.class.getResourceAsStream(location);
+			if (is == null) return;
 			player = Manager.createPlayer(is, "audio/midi");
 			if (mode == PLAY_CONTINUOUS) {
 				player.setLoopCount(-1);
 			}
 			player.start();
-			is.close();
 		} catch (IOException e) {
 			e.printStackTrace();
 		} catch (MediaException e) {
 			e.printStackTrace();
+		} finally {
+			if (is != null) {
+				try { is.close(); } catch (IOException ignored) {}
+			}
 		}
 	}
 

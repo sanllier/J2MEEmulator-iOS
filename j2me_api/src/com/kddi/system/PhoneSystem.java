@@ -24,8 +24,12 @@ public class PhoneSystem {
 	}
 
 	public static int getKeyState(boolean eightDirections) {
-		VirtualKeyboard vk = null;
-		return vk.getKeyStatesVodafone();
+		// VirtualKeyboard polling isn't wired up on this port; KDDI games still
+		// receive key events through Canvas.keyPressed/keyReleased. Return "no
+		// keys pressed" instead of dereferencing a null VirtualKeyboard, which
+		// would crash every KDDI MIDlet on the very first poll. Vodafone's
+		// DeviceControl uses the same fallback.
+		return 0;
 	}
 
 }

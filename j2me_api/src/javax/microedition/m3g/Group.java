@@ -123,7 +123,11 @@ public class Group extends Node {
 	 */
 	private void linkChild(Node child) {
 		if (child == null) {
-			throw new Error(); // DEBUG
+			// JSR-184 contract for Group.addChild — null child is an NPE, not
+			// a debug Error. The previous throw was left over from M3G engine
+			// development and made every M3G game that tripped a null branch
+			// crash unrecoverably.
+			throw new NullPointerException("child is null");
 		}
 		if (children == null) {
 			children = new Vector();
