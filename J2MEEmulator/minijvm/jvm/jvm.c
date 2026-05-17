@@ -226,6 +226,7 @@ s32 get_jvm_state(MiniJVM *jvm) {
     return jvm->jvm_state;
 }
 
+#if !__JVM_OS_IOS__
 void _on_jvm_sig_print(s32 no) {
     jvm_printf("[SIGNAL]jvm sig:%d  errno: %d , %s\n", no, errno, strerror(errno));
 }
@@ -234,6 +235,7 @@ void _on_jvm_sig(s32 no) {
     _on_jvm_sig_print(no);
     exit(no);
 }
+#endif
 
 MiniJVM *jvm_create() {
     MiniJVM *jvm = jvm_calloc(sizeof(MiniJVM));
@@ -254,12 +256,26 @@ s32 jvm_init(MiniJVM *jvm, c8 *p_bootclasspath, c8 *p_classpath) {
         return -1;
     }
 
+#if __JVM_OS_IOS__
+    // On iOS we deliberately do NOT trap SIGSEGV/SIGABRT/SIGFPE/SIGTERM —
+    // the system crash reporter (mach exception handlers + Apple/third-party
+    // signal handlers) must see them unmodified to produce usable crashlogs.
+    // The previous handler also called vfprintf and exit() from inside a
+    // signal handler, both of which are unsafe: printf is not async-signal-
+    // safe, and exit() runs atexit hooks on a potentially corrupted heap.
+    // SIGPIPE is still neutralized so a write to a closed socket doesn't kill
+    // the process — SIG_IGN is kernel-level and async-signal-safe.
+    #ifdef SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
+    #endif
+#else
     signal(SIGABRT, _on_jvm_sig);
     signal(SIGFPE, _on_jvm_sig);
     signal(SIGSEGV, _on_jvm_sig);
     signal(SIGTERM, _on_jvm_sig);
-#ifdef SIGPIPE
+    #ifdef SIGPIPE
     signal(SIGPIPE, _on_jvm_sig_print); //not exit when network sigpipe
+    #endif
 #endif
 
     set_jvm_state(jvm, JVM_STATUS_INITING);
