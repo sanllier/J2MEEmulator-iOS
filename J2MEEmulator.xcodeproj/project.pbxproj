@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		8A8109492F6F18CB00E5A952 /* CoreHaptics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8A8109482F6F18CB00E5A952 /* CoreHaptics.framework */; };
+		8AF297BE2FBA0E04000924BF /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 8AF297BD2FBA0E04000924BF /* FirebaseCrashlytics */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -100,6 +101,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8A8109492F6F18CB00E5A952 /* CoreHaptics.framework in Frameworks */,
+				8AF297BE2FBA0E04000924BF /* FirebaseCrashlytics in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +145,7 @@
 				8A8184DA2F6C9DD500E5A952 /* Sources */,
 				8A8184DB2F6C9DD500E5A952 /* Frameworks */,
 				8A8184DC2F6C9DD500E5A952 /* Resources */,
+				8AF297C62FBA0F0B000924BF /* [Crashlytics] Upload dSYMs */,
 			);
 			buildRules = (
 			);
@@ -153,6 +156,7 @@
 			);
 			name = J2MEEmulator;
 			packageProductDependencies = (
+				8AF297BD2FBA0E04000924BF /* FirebaseCrashlytics */,
 			);
 			productName = J2MEEmulator;
 			productReference = 8A8184DE2F6C9DD500E5A952 /* JarBox.app */;
@@ -182,6 +186,9 @@
 			);
 			mainGroup = 8A8184D52F6C9DD500E5A952;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8AF297BC2FBA0E04000924BF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8A8184DF2F6C9DD500E5A952 /* Products */;
 			projectDirPath = "";
@@ -201,6 +208,34 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		8AF297C62FBA0F0B000924BF /* [Crashlytics] Upload dSYMs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${PRODUCT_NAME}",
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "[Crashlytics] Upload dSYMs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [[ \"${CONFIGURATION}\" != \"Release\" ]]; then\n    exit 0\nfi\n${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		8A8184DA2F6C9DD500E5A952 /* Sources */ = {
@@ -482,6 +517,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8AF297BC2FBA0E04000924BF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8AF297BD2FBA0E04000924BF /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8AF297BC2FBA0E04000924BF /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8A8184D62F6C9DD500E5A952 /* Project object */;
 }
