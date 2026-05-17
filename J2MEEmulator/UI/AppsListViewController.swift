@@ -297,7 +297,12 @@ class AppsListViewController: UIViewController,
         return renderer.image { ctx in
             let rect = CGRect(origin: .zero, size: size)
 
-            UIBezierPath(roundedRect: rect, cornerRadius: SpringboardCell.iconCornerRadius).addClip()
+            // Render as a flat square — the cell applies a continuous-corner
+            // mask (cornerCurve = .continuous) and a CALayer border, which
+            // together give iOS-Springboard squircle corners. Pre-clipping
+            // here with UIBezierPath(roundedRect:cornerRadius:) would bake in
+            // a circular-arc rounded rect that doesn't match the squircle and
+            // would poke out at the corner extremes.
 
             if let img = jarIcon {
                 UIColor(white: 0.22, alpha: 1).setFill()
@@ -324,14 +329,6 @@ class AppsListViewController: UIViewController,
                                 y: (iconSize - strSize.height) / 2),
                     withAttributes: attrs)
             }
-
-            // Uniform 1pt translucent border around the whole rounded icon — no sheen,
-            // no top/bottom inset accents (those read as uneven "glints").
-            let borderPath = UIBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
-                                           cornerRadius: SpringboardCell.iconCornerRadius - 0.5)
-            UIColor.white.withAlphaComponent(0.12).setStroke()
-            borderPath.lineWidth = 1
-            borderPath.stroke()
         }
     }
 
