@@ -283,7 +283,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_CFLAGS = (
 					"-Wno-implicit-function-declaration",
 					"-DM3G_TARGET_GENERIC",
@@ -346,7 +346,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_CFLAGS = (
 					"-Wno-implicit-function-declaration",
 					"-DM3G_TARGET_GENERIC",
