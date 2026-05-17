@@ -80,6 +80,15 @@ int jvm_bridge_init(const char *res_root, const char *save_root, const char *mid
     sys_properties_set_c(g_jvm, "microedition.profiles", "MIDP-2.0");
     sys_properties_set_c(g_jvm, "microedition.configuration", "CLDC-1.1");
 
+    // Optional-package feature flags — J2ME apps query these via System.getProperty
+    // to decide which subsystems they can use. Only advertise what we actually
+    // implement; stubbed APIs (location, AMMS, wireless.messaging, PIM) stay
+    // unset so apps fall back to a non-supported path instead of trying to use
+    // a stub and crashing.
+    sys_properties_set_c(g_jvm, "microedition.m3g.version", "1.1");                       // JSR-184
+    sys_properties_set_c(g_jvm, "microedition.media.version", "1.1");                     // JSR-135 MMAPI
+    sys_properties_set_c(g_jvm, "microedition.io.file.FileConnection.version", "1.0");    // JSR-75
+
     // Screen dimensions — used by Display.java to set canvas size
     char sw[16], sh[16];
     snprintf(sw, sizeof(sw), "%d", screen_width);
