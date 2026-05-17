@@ -50,6 +50,15 @@ class SpringboardCell: UICollectionViewCell {
 
         iconView.contentMode = .scaleAspectFill
         iconView.translatesAutoresizingMaskIntoConstraints = false
+        // Subtle drop shadow under the icon — gives the tile a bit of depth
+        // against the springboard background. shadowPath is set in
+        // layoutSubviews so the GPU doesn't have to derive it from the alpha
+        // mask every frame (cheap during scrolling).
+        iconView.layer.shadowColor = UIColor.black.cgColor
+        iconView.layer.shadowOpacity = 0.4
+        iconView.layer.shadowOffset = CGSize(width: 0, height: 4)
+        iconView.layer.shadowRadius = 9
+        iconView.layer.masksToBounds = false
         contentView.addSubview(iconView)
 
         nameLabel.textAlignment = .center
@@ -73,6 +82,14 @@ class SpringboardCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        iconView.layer.shadowPath = UIBezierPath(
+            roundedRect: iconView.bounds,
+            cornerRadius: Self.iconCornerRadius
+        ).cgPath
     }
 
     override func prepareForReuse() {
