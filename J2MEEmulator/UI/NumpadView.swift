@@ -146,4 +146,19 @@ class NumpadView: UIView {
     @objc private func commandTapped(_ sender: NeumoButton) {
         j2me_input_post_key(Int32(J2ME_UI_COMMAND_ACTION), Int32(sender.tag - 1000))
     }
+
+    // Command buttons are positioned below the 4×3 key grid — outside our own
+    // bounds (NumpadView.frame is sized for the grid only). They render fine
+    // (clipsToBounds is false), but UIView's default hitTest returns nil for
+    // any point outside bounds, so taps on them never reach the button. Extend
+    // hit-testing to cover those out-of-bounds command buttons explicitly.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let hit = super.hitTest(point, with: event) { return hit }
+        guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+        for btn in commandButtons where !btn.isHidden && btn.isUserInteractionEnabled && btn.alpha > 0.01 {
+            let local = convert(point, to: btn)
+            if btn.bounds.contains(local) { return btn }
+        }
+        return nil
+    }
 }
