@@ -8,6 +8,7 @@
 //
 
 import UIKit
+import FirebaseCrashlytics
 
 // MARK: - Layout mode (extensible for future layouts)
 
@@ -75,6 +76,9 @@ class GameViewController: UIViewController {
         j2me_ui_set_callback(nil)
         setGlobalEmulatorView(nil)
         alertTimeoutWork?.cancel()
+        // Clear the MIDlet attribution so subsequent crashes (back in the
+        // springboard) aren't blamed on the game we just closed.
+        Crashlytics.crashlytics().setCustomValue("", forKey: "active_midlet")
     }
 
     private var alertTimeoutWork: DispatchWorkItem?
@@ -91,6 +95,14 @@ class GameViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         canvasRatio = CGFloat(canvasWidth) / CGFloat(canvasHeight)
+
+        // Tag any subsequent crash with which MIDlet was running — visible in
+        // the Firebase Crashlytics report under "Keys". A breadcrumb log is
+        // also written so the timeline shows when each game started.
+        let jarFile = URL(fileURLWithPath: jarPath).lastPathComponent
+        Crashlytics.crashlytics().setCustomValue(appName, forKey: "active_midlet")
+        Crashlytics.crashlytics().setCustomValue(jarFile, forKey: "active_midlet_jar")
+        Crashlytics.crashlytics().log("MIDlet start: \(appName) [\(jarFile)]")
 
         emulatorView.canvasWidth = canvasWidth
         emulatorView.canvasHeight = canvasHeight
