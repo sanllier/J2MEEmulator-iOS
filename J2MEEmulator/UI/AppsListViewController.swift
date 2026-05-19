@@ -103,7 +103,7 @@ class AppsListViewController: UIViewController,
         view.addSubview(addButton)
 
         // Empty state
-        emptyStateLabel.text = "No Games Yet\nTap + to add a .jar file"
+        emptyStateLabel.text = "No Games Yet\nTap + to pick a .jar — or share one from another app"
         emptyStateLabel.textColor = NeumoPalette.label
         emptyStateLabel.font = .systemFont(ofSize: 17)
         emptyStateLabel.textAlignment = .center
