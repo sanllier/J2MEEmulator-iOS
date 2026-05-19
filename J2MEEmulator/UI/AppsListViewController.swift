@@ -226,8 +226,16 @@ class AppsListViewController: UIViewController,
             let destURL = URL(fileURLWithPath: gamesDirectory)
                 .appendingPathComponent(url.lastPathComponent)
 
-            // Overwrite if a same-named JAR already exists — the user re-shared
-            // it on purpose, treat it as an update.
+            // Tap-to-open from Files on a JAR that is already in our games/
+            // folder hands us back the same path we'd copy to. Without this
+            // guard we'd removeItem(dest) — wiping the source — and then fail
+            // on copyItem, losing the file. Compare canonical paths so symlinks
+            // and ./.. don't fool us.
+            let srcPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+            let dstPath = destURL.resolvingSymlinksInPath().standardizedFileURL.path
+            if srcPath == dstPath { continue }
+
+            // Different file with the same name — treat as an update, overwrite.
             try? fm.removeItem(at: destURL)
 
             do {
