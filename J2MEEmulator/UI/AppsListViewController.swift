@@ -479,19 +479,24 @@ class AppsListViewController: UIViewController,
     }
 
     private static let resolutionOptions: [(label: String, w: Int, h: Int)] = [
-        // Common J2ME resolutions (portrait / square only)
+        // Common J2ME canvas resolutions across Nokia / Sony Ericsson / Samsung
+        // generations. Roughly ordered by overall pixel size.
         ("101×80",   101,  80),
+        ("128×96",   128,  96),  // Nokia 3650 / 7250 (Series 60 1st ed.)
         ("128×128",  128, 128),
         ("128×160",  128, 160),
         ("132×176",  132, 176),
         ("160×128",  160, 128),
+        ("176×144",  176, 144),  // QCIF — Sony Ericsson T610 / K500
         ("176×208",  176, 208),
         ("176×220",  176, 220),
         ("208×208",  208, 208),
+        ("208×320",  208, 320),  // Sony Ericsson K800i / K850i
         ("220×220",  220, 220),
         ("240×266",  240, 266),
         ("240×320",  240, 320),
         ("240×400",  240, 400),
+        ("320×240",  320, 240),  // Landscape variant of 240×320
         ("320×480",  320, 480),
         ("352×416",  352, 416),
         ("360×640",  360, 640),
