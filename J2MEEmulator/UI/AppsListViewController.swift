@@ -10,6 +10,13 @@
 import UIKit
 import UniformTypeIdentifiers
 
+extension Notification.Name {
+    /// Posted by SceneDelegate after one or more JARs are imported via
+    /// "Open in JarBox" / share sheet — AppsListViewController listens and
+    /// triggers a library refresh.
+    static let jarsImported = Notification.Name("jarsImported")
+}
+
 class AppsListViewController: UIViewController,
                       UICollectionViewDataSource,
                       UICollectionViewDelegate,
@@ -126,14 +133,21 @@ class AppsListViewController: UIViewController,
         super.viewDidAppear(animated)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive),
                                                name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(jarImported),
+                                               name: .jarsImported, object: nil)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .jarsImported, object: nil)
     }
 
     @objc private func appDidBecomeActive() {
+        scanApps()
+    }
+
+    @objc private func jarImported() {
         scanApps()
     }
 
@@ -188,7 +202,20 @@ class AppsListViewController: UIViewController,
 
     func documentPicker(_ controller: UIDocumentPickerViewController,
                         didPickDocumentsAt urls: [URL]) {
+        let imported = Self.importJars(from: urls)
+        if imported > 0 {
+            scanApps()
+        }
+    }
+
+    /// Copy one or more `.jar` URLs into Documents/games/ — used by both the
+    /// in-app document picker and the Scene URL handler (Files long-press
+    /// "Open in JarBox" or sharing a JAR from another app). Returns the
+    /// number of files actually copied.
+    @discardableResult
+    static func importJars(from urls: [URL]) -> Int {
         let fm = FileManager.default
+        try? fm.createDirectory(atPath: gamesDirectory, withIntermediateDirectories: true)
         var imported = 0
 
         for url in urls {
@@ -196,10 +223,11 @@ class AppsListViewController: UIViewController,
             let accessing = url.startAccessingSecurityScopedResource()
             defer { if accessing { url.stopAccessingSecurityScopedResource() } }
 
-            let destURL = URL(fileURLWithPath: Self.gamesDirectory)
+            let destURL = URL(fileURLWithPath: gamesDirectory)
                 .appendingPathComponent(url.lastPathComponent)
 
-            // If file with same name exists, remove it (overwrite)
+            // Overwrite if a same-named JAR already exists — the user re-shared
+            // it on purpose, treat it as an update.
             try? fm.removeItem(at: destURL)
 
             do {
@@ -209,10 +237,7 @@ class AppsListViewController: UIViewController,
                 print("[Swift] Failed to import \(url.lastPathComponent): \(error)")
             }
         }
-
-        if imported > 0 {
-            scanApps()
-        }
+        return imported
     }
 
     // ============================================================

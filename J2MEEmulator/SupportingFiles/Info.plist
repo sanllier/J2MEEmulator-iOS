@@ -28,5 +28,54 @@
 	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- LSSupportsOpeningDocumentsInPlace=true is what makes Files open the
+	     JAR in us on tap — with it false, Files refuses to launch a "view-only"
+	     opener (Apple's UX rule). We always copy the file into Documents/games/
+	     inside importJars(from:) anyway, so leaving the original in place is
+	     fine. -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<!-- Document type registration. Exported (rather than Imported) +
+	     LSHandlerRank=Owner tells iOS we *define* the `com.sun.java-archive`
+	     UTI on this device, so Files treats us as the default opener for `.jar`
+	     instead of falling back to its ZIP preview. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Java Archive</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.sun.java-archive</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.sun.java-archive</string>
+			<key>UTTypeDescription</key>
+			<string>Java Archive</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>jar</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/java-archive</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

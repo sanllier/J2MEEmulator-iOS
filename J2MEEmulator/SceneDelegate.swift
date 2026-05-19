@@ -37,6 +37,25 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window = UIWindow(windowScene: windowScene)
         window?.rootViewController = nav
         window?.makeKeyAndVisible()
+
+        // Cold launch via "Open in JarBox" — the URL contexts arrive in the
+        // connection options and are NOT forwarded to scene(_:openURLContexts:).
+        if !connectionOptions.urlContexts.isEmpty {
+            handleIncoming(urls: connectionOptions.urlContexts.map { $0.url })
+        }
+    }
+
+    /// Called by iOS when our app is asked to open a `.jar` — long-press →
+    /// "Open in JarBox" from Files, or share-sheet from Mail/Safari/etc.
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        handleIncoming(urls: URLContexts.map { $0.url })
+    }
+
+    private func handleIncoming(urls: [URL]) {
+        let imported = AppsListViewController.importJars(from: urls)
+        if imported > 0 {
+            NotificationCenter.default.post(name: .jarsImported, object: nil)
+        }
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
